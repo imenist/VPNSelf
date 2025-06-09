@@ -1,8 +1,12 @@
 package com.example.vpnself.ui.common.home
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.net.VpnService
 import androidx.lifecycle.ViewModel
 import com.example.vpnself.ui.common.history.HistoryActivity
+import com.example.vpnself.vpn.PacketCaptureService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -19,13 +23,26 @@ class HomeViewModel : ViewModel() {
     private val _isCapturing = MutableStateFlow(false)
     val isCapturing: StateFlow<Boolean> = _isCapturing
 
-    fun startCapture() {
-        // TODO: 实现VPN连接和抓包逻辑
+    fun startCapture(activity: Activity) {
+        val vpnIntent = VpnService.prepare(activity)
+        if (vpnIntent != null) {
+            activity.startActivityForResult(vpnIntent, VPN_REQUEST_CODE)
+        } else {
+            onVpnPermissionGranted(activity)
+        }
+    }
+
+    fun onVpnPermissionGranted(context: Context) {
+        val intent = Intent(context, PacketCaptureService::class.java)
+        context.startService(intent)
         _isCapturing.value = true
     }
 
-    fun stopCapture() {
-        // TODO: 实现停止VPN连接和抓包逻辑
+    fun stopCapture(context: Context) {
+        val intent = Intent(context, PacketCaptureService::class.java).apply {
+            action = "STOP"
+        }
+        context.startService(intent)
         _isCapturing.value = false
     }
 
@@ -39,5 +56,9 @@ class HomeViewModel : ViewModel() {
             downloadBytes = downloadBytes,
             requestCount = requestCount
         )
+    }
+
+    companion object {
+        const val VPN_REQUEST_CODE = 1
     }
 }

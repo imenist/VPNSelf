@@ -1,5 +1,6 @@
 package com.example.vpnself.ui.common.home
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,10 +15,20 @@ import androidx.compose.ui.unit.dp
 import com.example.vpnself.ui.common.history.HistoryActivity
 
 class HomeActivity : ComponentActivity() {
+    private lateinit var viewModel: HomeViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        viewModel = HomeViewModel()
         setContent {
-            HomeScreen()
+            HomeScreen(viewModel = viewModel)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == HomeViewModel.VPN_REQUEST_CODE && resultCode == RESULT_OK) {
+            viewModel.onVpnPermissionGranted(this)
         }
     }
 }
@@ -25,9 +36,12 @@ class HomeActivity : ComponentActivity() {
 @Composable
 fun HomeScreen(
     modifier: Modifier = Modifier,
-    viewModel: HomeViewModel = HomeViewModel()
+    viewModel: HomeViewModel
 ) {
     val context = LocalContext.current
+    val isCapturing by viewModel.isCapturing.collectAsState()
+    val trafficStats by viewModel.trafficStats.collectAsState()
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -48,12 +62,18 @@ fun HomeScreen(
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             Button(
-                onClick = { viewModel.startCapture() },
+                onClick = { 
+                    if (isCapturing) {
+                        viewModel.stopCapture(context)
+                    } else {
+                        viewModel.startCapture(context as HomeActivity)
+                    }
+                },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFE65100) // 橙色按钮
+                    containerColor = if (isCapturing) Color(0xFFE53935) else Color(0xFFE65100)
                 )
             ) {
-                Text("开始抓包")
+                Text(if (isCapturing) "停止抓包" else "开始抓包")
             }
 
             Button(
@@ -61,7 +81,7 @@ fun HomeScreen(
                     viewModel.navigateToCaptureHistory(context)
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF2196F3) // 蓝色按钮
+                    containerColor = Color(0xFF2196F3)
                 )
             ) {
                 Text("抓包历史")
@@ -86,15 +106,15 @@ fun HomeScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("上传流量")
-                        Text("0 Byte")
+                        Text("${trafficStats.uploadBytes} Byte")
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("下载流量")
-                        Text("0 Byte")
+                        Text("${trafficStats.downloadBytes} Byte")
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("请求数")
-                        Text("-")
+                        Text("${trafficStats.requestCount}")
                     }
                 }
             }
