@@ -13,7 +13,7 @@
         android:theme="@style/Theme.VPNSelf"
         tools:targetApi="31">
         <activity
-            android:name=".MainActivity"
+            android:name=".ui.common.home.HomeActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.VPNSelf">
@@ -23,6 +23,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ui.common.history.HistoryActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

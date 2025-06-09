@@ -1,4 +1,4 @@
-package com.example.vpnself
+package com.example.vpnself.ui.common
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
