@@ -41,7 +41,7 @@ class PacketCaptureService : VpnService() {
         private const val NOTIFICATION_CHANNEL_ID = "vpn_capture"
         private const val NOTIFICATION_ID = 1
         private const val BUFFER_SIZE = 32767
-        private const val MTU = 1500
+        private const val MTU = 1400
         private const val VPN_ADDRESS = "10.1.10.1"
         private const val VPN_ROUTE = "0.0.0.0"
     }
@@ -110,8 +110,8 @@ class PacketCaptureService : VpnService() {
             vpnInterface = Builder()
                 .setSession("VPNSelf")
                 .addAddress(VPN_ADDRESS, 24)
-                .addDnsServer("8.8.8.8")
-                .addDnsServer("8.8.4.4")
+                .addDnsServer("1.1.1.1")
+                .addDnsServer("9.9.9.9")
                 .addRoute(VPN_ROUTE, 0)
                 .allowFamily(android.system.OsConstants.AF_INET)
                 .allowFamily(android.system.OsConstants.AF_INET6)

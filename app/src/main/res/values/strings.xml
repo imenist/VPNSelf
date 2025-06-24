@@ -1,3 +1,20 @@
 <resources>
     <string name="app_name">VPNSelf</string>
+    
+    <!-- 抢购脚本相关字符串 -->
+    <string name="accessibility_service_description">自动抢购脚本服务，用于监控微信小程序并执行自动抢购功能</string>
+    <string name="script_title">抢购脚本</string>
+    <string name="script_start">开始抢购</string>
+    <string name="script_stop">停止抢购</string>
+    <string name="script_status">脚本状态</string>
+    <string name="script_settings">脚本设置</string>
+    <string name="script_interval">点击间隔(毫秒)</string>
+    <string name="script_target_text">目标按钮文本</string>
+    <string name="script_enable_floating">启用悬浮窗</string>
+    <string name="permission_overlay_required">需要悬浮窗权限</string>
+    <string name="permission_accessibility_required">需要无障碍服务权限</string>
+    <string name="script_running">脚本运行中</string>
+    <string name="script_stopped">脚本已停止</string>
+    <string name="api_monitor_title">API监控</string>
+    <string name="api_captured">捕获到接口</string>
 </resources>

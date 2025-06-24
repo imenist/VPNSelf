@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.vpnself.ui.common.history.HistoryActivity
+import com.example.vpnself.ui.common.script.ScriptActivity
 
 class HomeActivity : ComponentActivity() {
     private lateinit var viewModel: HomeViewModel
@@ -55,36 +56,60 @@ fun HomeScreen(
         )
 
         // 按钮区域
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 24.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Button(
-                onClick = { 
-                    if (isCapturing) {
-                        viewModel.stopCapture(context)
-                    } else {
-                        viewModel.startCapture(context as HomeActivity)
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isCapturing) Color(0xFFE53935) else Color(0xFFE65100)
-                )
+            // 第一行按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Text(if (isCapturing) "停止抓包" else "开始抓包")
-            }
+                Button(
+                    onClick = { 
+                        if (isCapturing) {
+                            viewModel.stopCapture(context)
+                        } else {
+                            viewModel.startCapture(context as HomeActivity)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isCapturing) Color(0xFFE53935) else Color(0xFFE65100)
+                    )
+                ) {
+                    Text(if (isCapturing) "停止抓包" else "开始抓包")
+                }
 
-            Button(
-                onClick = {
-                    viewModel.navigateToCaptureHistory(context)
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF2196F3)
-                )
+                Button(
+                    onClick = {
+                        viewModel.navigateToCaptureHistory(context)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2196F3)
+                    )
+                ) {
+                    Text("抓包历史")
+                }
+            }
+            
+            // 第二行按钮 - 抢购脚本
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
             ) {
-                Text("抓包历史")
+                Button(
+                    onClick = {
+                        val intent = Intent(context, ScriptActivity::class.java)
+                        context.startActivity(intent)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF4CAF50)
+                    )
+                ) {
+                    Text("抢购脚本")
+                }
             }
         }
 

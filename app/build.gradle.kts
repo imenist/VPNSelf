@@ -73,6 +73,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
+    // 抢购脚本相关依赖
+    implementation("androidx.webkit:webkit:1.8.0") // WebView增强
+    implementation("com.google.code.gson:gson:2.10.1") // JSON解析
+    implementation("androidx.preference:preference-ktx:1.2.1") // 设置界面
+    implementation("androidx.work:work-runtime-ktx:2.9.0") // 后台任务
+
     // 测试相关
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
