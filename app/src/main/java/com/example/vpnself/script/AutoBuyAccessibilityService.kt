@@ -27,10 +27,12 @@ class AutoBuyAccessibilityService : AccessibilityService() {
     
     private val handler = Handler(Looper.getMainLooper())
     private val isRunning = AtomicBoolean(false)
+    private val isCapturing = AtomicBoolean(false)
     private val networkMonitor by lazy { NetworkMonitor(this) }
     private var webView: WebView? = null
     private var lastApiCall: String? = null
     private var capturedApis = mutableSetOf<String>()
+    private var learnedPurchaseApi: String? = null
     
     // 性能优化标记
     private var isJsInjected = AtomicBoolean(false)
@@ -163,23 +165,79 @@ class AutoBuyAccessibilityService : AccessibilityService() {
         }
     }
     
+    fun startCapture() {
+        if (isCapturing.compareAndSet(false, true)) {
+            Log.d(TAG, "开始API抓包")
+            Toast.makeText(this, "API抓包已启动，请手动操作小程序", Toast.LENGTH_SHORT).show()
+            
+            // 重置学习的API
+            learnedPurchaseApi = null
+            networkMonitor.clearData()
+            
+            // 设置网络监控回调 - 学习模式
+            networkMonitor.setOnApiCapturedCallback { request ->
+                // 分析是否为购买API
+                if (isPurchaseRequest(request)) {
+                    learnedPurchaseApi = request.id
+                    Log.d(TAG, "学习到购买API: ${request.method} ${request.url}")
+                    Toast.makeText(this, "已学习购买接口！", Toast.LENGTH_SHORT).show()
+                    
+                    // 通知悬浮窗更新
+                    sendBroadcast(Intent("com.example.vpnself.PURCHASE_API_LEARNED"))
+                }
+                
+                // 通知悬浮窗更新API数量
+                sendBroadcast(Intent("com.example.vpnself.API_CAPTURED").apply {
+                    putExtra("api", "${request.method} ${request.url}")
+                    putExtra("response", request.responseBody)
+                })
+            }
+            
+            // 启动悬浮窗
+            startFloatingWindow()
+            
+            // 注入JS监听网络请求
+            injectJavaScript()
+        }
+    }
+    
+    fun stopCapture() {
+        if (isCapturing.compareAndSet(true, false)) {
+            Log.d(TAG, "停止API抓包")
+            Toast.makeText(this, "API抓包已停止", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
     fun startScript() {
+        if (learnedPurchaseApi == null) {
+            Toast.makeText(this, "请先进行API抓包学习购买接口", Toast.LENGTH_LONG).show()
+            return
+        }
+        
         if (isRunning.compareAndSet(false, true)) {
             Log.d(TAG, "开始执行抢购脚本")
             Toast.makeText(this, "抢购脚本已启动", Toast.LENGTH_SHORT).show()
             
-            // 设置网络监控回调
+            // 设置网络监控回调 - 抢购模式
             networkMonitor.setOnStockFoundCallback { hasStock ->
                 if (hasStock) {
                     Log.d(TAG, "发现库存，准备抢购")
                     // 自动执行抢购逻辑
                     serviceScope.launch {
                         try {
-                            if (networkMonitor.getPurchaseApis().isNotEmpty()) {
-                                // 使用API重放进行抢购
-                                val success = networkMonitor.autoPurchase()
-                                if (success) {
+                            // 优先使用学习到的购买API
+                            if (learnedPurchaseApi != null) {
+                                val success = networkMonitor.replayRequest(learnedPurchaseApi!!)
+                                if (success?.isSuccessful == true) {
                                     Log.d(TAG, "抢购成功！")
+                                    handler.post {
+                                        Toast.makeText(this@AutoBuyAccessibilityService, "抢购成功！", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else {
+                                    Log.d(TAG, "API重放失败，尝试UI操作")
+                                    withContext(Dispatchers.Main) {
+                                        startAutoBuyProcess()
+                                    }
                                 }
                             } else {
                                 // 回退到UI操作
@@ -192,14 +250,6 @@ class AutoBuyAccessibilityService : AccessibilityService() {
                         }
                     }
                 }
-            }
-            
-            networkMonitor.setOnApiCapturedCallback { request ->
-                // 通知悬浮窗更新
-                sendBroadcast(Intent("com.example.vpnself.API_CAPTURED").apply {
-                    putExtra("api", "${request.method} ${request.url}")
-                    putExtra("response", request.responseBody)
-                })
             }
             
             // 启动悬浮窗
@@ -231,16 +281,23 @@ class AutoBuyAccessibilityService : AccessibilityService() {
         if (isRunning.compareAndSet(true, false)) {
             Log.d(TAG, "停止执行抢购脚本")
             Toast.makeText(this, "抢购脚本已停止", Toast.LENGTH_SHORT).show()
-            
-            // 重置JS注入状态
-            isJsInjected.set(false)
-            
-            // 清除网络监控数据
-            networkMonitor.clearData()
-            
-            // 停止悬浮窗
-            stopFloatingWindow()
         }
+    }
+    
+    fun stopAll() {
+        isRunning.set(false)
+        isCapturing.set(false)
+        
+        // 重置JS注入状态
+        isJsInjected.set(false)
+        
+        // 清除网络监控数据
+        networkMonitor.clearData()
+        
+        // 停止悬浮窗
+        stopFloatingWindow()
+        
+        Log.d(TAG, "所有功能已停止")
     }
     
     private fun startAutoBuyProcess() {
@@ -340,8 +397,33 @@ class AutoBuyAccessibilityService : AccessibilityService() {
     }
     
     private fun startFloatingWindow() {
-        val intent = Intent(this, FloatingWindowService::class.java)
-        startService(intent)
+        try {
+            val intent = Intent(this, FloatingWindowService::class.java)
+            startService(intent)
+            Log.d(TAG, "悬浮窗服务启动请求已发送")
+        } catch (e: Exception) {
+            Log.e(TAG, "启动悬浮窗失败: ${e.message}")
+            handler.post {
+                Toast.makeText(this, "悬浮窗启动失败，请检查权限", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    
+    fun ensureFloatingWindow() {
+        if (!isFloatingWindowShowing()) {
+            startFloatingWindow()
+        }
+    }
+    
+    private fun isFloatingWindowShowing(): Boolean {
+        // 通过广播检查悬浮窗是否在运行
+        return try {
+            val intent = Intent("com.example.vpnself.CHECK_FLOATING_WINDOW")
+            sendBroadcast(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
     
     private fun stopFloatingWindow() {
@@ -350,12 +432,67 @@ class AutoBuyAccessibilityService : AccessibilityService() {
     }
     
     fun getScriptStatus(): String {
-        return if (isRunning.get()) "运行中" else "已停止"
+        return when {
+            isRunning.get() -> "抢购中"
+            isCapturing.get() -> "抓包中"
+            else -> "已停止"
+        }
     }
+    
+    fun getCaptureStatus(): String {
+        return if (isCapturing.get()) "抓包中" else "未抓包"
+    }
+    
+    fun isScriptRunning(): Boolean = isRunning.get()
+    
+    fun isCapturingActive(): Boolean = isCapturing.get()
+    
+    fun hasLearnedPurchaseApi(): Boolean = learnedPurchaseApi != null
     
     fun getCapturedApis(): Set<String> {
         return networkMonitor.getCapturedRequests().map { "${it.method} ${it.url}" }.toSet()
     }
     
+    /**
+     * 判断是否为购买请求
+     * 通过URL、请求体、响应内容来识别
+     */
+    private fun isPurchaseRequest(request: NetworkMonitor.CapturedRequest): Boolean {
+        val url = request.url.lowercase()
+        val requestBody = request.requestBody.lowercase()
+        val responseBody = request.responseBody.lowercase()
+        
+        // 购买相关的关键词
+        val purchaseKeywords = listOf(
+            "buy", "purchase", "order", "cart", "checkout", "pay",
+            "购买", "下单", "支付", "结算", "加入购物车", "立即购买",
+            "addcart", "addtocart", "createorder", "submitorder"
+        )
+        
+        // 检查URL是否包含购买关键词
+        val urlMatch = purchaseKeywords.any { keyword ->
+            url.contains(keyword)
+        }
+        
+        // 检查请求体是否包含购买相关参数
+        val bodyMatch = purchaseKeywords.any { keyword ->
+            requestBody.contains(keyword)
+        } || requestBody.contains("quantity") || requestBody.contains("amount")
+        
+        // 检查响应是否包含订单相关信息
+        val responseMatch = responseBody.contains("orderid") || 
+                           responseBody.contains("order_id") ||
+                           responseBody.contains("订单") ||
+                           responseBody.contains("success") && bodyMatch
+        
+        val isPurchase = urlMatch || (bodyMatch && request.method.equals("POST", ignoreCase = true))
+        
+        if (isPurchase) {
+            Log.d(TAG, "识别到购买请求: ${request.method} ${request.url}")
+            Log.d(TAG, "匹配原因 - URL: $urlMatch, Body: $bodyMatch, Response: $responseMatch")
+        }
+        
+        return isPurchase
+    }
 
 } 

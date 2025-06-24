@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.vpnself.script.AutoBuyAccessibilityService
 import com.example.vpnself.script.PermissionManager
+import com.example.vpnself.script.FloatingWindowService
 import com.example.vpnself.ui.theme.VPNSelfTheme
 
 class ScriptActivity : ComponentActivity() {
@@ -112,6 +113,11 @@ class ScriptActivity : ComponentActivity() {
                 // API监控卡片
                 item {
                     ApiMonitorCard(capturedApis = capturedApis)
+                }
+                
+                // 悬浮窗控制卡片
+                item {
+                    FloatingWindowCard()
                 }
                 
                 // 使用说明卡片
@@ -292,6 +298,58 @@ class ScriptActivity : ComponentActivity() {
         }
     }
     
+        @Composable
+    fun FloatingWindowCard() {
+        Card(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "悬浮窗控制",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    text = "如果悬浮窗没有自动显示，请手动启动：",
+                    fontSize = 14.sp
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            startFloatingWindow()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("启动悬浮窗")
+                    }
+                    
+                    Button(
+                        onClick = {
+                            stopFloatingWindow()
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("关闭悬浮窗")
+                    }
+                }
+            }
+        }
+    }
+    
     @Composable
     fun InstructionCard() {
         Card(
@@ -310,11 +368,12 @@ class ScriptActivity : ComponentActivity() {
                 
                 val instructions = listOf(
                     "1. 首先开启无障碍服务和悬浮窗权限",
-                    "2. 打开微信小程序的抢购页面",
-                                         "3. 点击开始抢购启动脚本",
-                    "4. 脚本会自动监控API接口并执行抢购",
-                    "5. 通过悬浮窗可以随时控制脚本状态",
-                    "6. 脚本会每隔500ms进行一次检测和操作"
+                    "2. 点击'启动悬浮窗'按钮显示控制面板",
+                    "3. 打开微信小程序商品页面",
+                    "4. 点击悬浮窗'开始抓包'学习购买接口",
+                    "5. 手动点击小程序购买按钮让系统学习",
+                    "6. 看到✓标记后点击'开始抢购'",
+                    "7. 系统将自动执行抢购操作"
                 )
                 
                 instructions.forEach { instruction ->
@@ -339,5 +398,31 @@ class ScriptActivity : ComponentActivity() {
         intent.data = Uri.parse("package:$packageName")
         startActivity(intent)
         Toast.makeText(this, "请允许显示悬浮窗", Toast.LENGTH_LONG).show()
+    }
+    
+    private fun startFloatingWindow() {
+        try {
+            if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_LONG).show()
+                requestOverlayPermission()
+                return
+            }
+            
+            val intent = Intent(this, FloatingWindowService::class.java)
+            startService(intent)
+            Toast.makeText(this, "悬浮窗启动中...", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "悬浮窗启动失败: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    private fun stopFloatingWindow() {
+        try {
+            val intent = Intent(this, FloatingWindowService::class.java)
+            stopService(intent)
+            Toast.makeText(this, "悬浮窗已关闭", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "关闭悬浮窗失败: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 } 

@@ -17,4 +17,8 @@
     <string name="script_stopped">脚本已停止</string>
     <string name="api_monitor_title">API监控</string>
     <string name="api_captured">捕获到接口</string>
+    <string name="capture_start">开始抓包</string>
+    <string name="capture_stop">停止抓包</string>
+    <string name="capturing">抓包中</string>
+    <string name="purchase_api_learned">已学习购买接口</string>
 </resources>

@@ -74,30 +74,50 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:gravity="center">
 
+            <!-- 第一行：抓包按钮 -->
             <Button
-                android:id="@+id/btn_start"
-                android:layout_width="0dp"
+                android:id="@+id/btn_capture"
+                android:layout_width="match_parent"
                 android:layout_height="36dp"
-                android:layout_weight="1"
-                android:layout_marginEnd="4dp"
-                android:background="@drawable/btn_start"
-                android:text="@string/script_start"
+                android:layout_marginBottom="4dp"
+                android:background="@drawable/btn_capture"
+                android:text="开始抓包"
                 android:textColor="#FFFFFF"
                 android:textSize="12sp" />
 
-            <Button
-                android:id="@+id/btn_stop"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/btn_stop"
-                android:text="@string/script_stop"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp" />
+            <!-- 第二行：开始和停止按钮 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <Button
+                    android:id="@+id/btn_start"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/btn_start"
+                    android:text="@string/script_start"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btn_stop"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/btn_stop"
+                    android:text="@string/script_stop"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
 
         </LinearLayout>
 

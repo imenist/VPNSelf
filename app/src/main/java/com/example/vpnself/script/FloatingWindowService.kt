@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -30,13 +31,23 @@ class FloatingWindowService : Service() {
     private lateinit var statusText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var captureButton: Button
     private lateinit var apiCountText: TextView
     
     private val apiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.example.vpnself.API_CAPTURED") {
-                val api = intent.getStringExtra("api") ?: ""
-                updateApiCount()
+            when (intent?.action) {
+                "com.example.vpnself.API_CAPTURED" -> {
+                    updateApiCount()
+                }
+                "com.example.vpnself.PURCHASE_API_LEARNED" -> {
+                    updateStatus()
+                    Toast.makeText(this@FloatingWindowService, "已学习购买接口！", Toast.LENGTH_SHORT).show()
+                }
+                "com.example.vpnself.CHECK_FLOATING_WINDOW" -> {
+                    // 响应检查请求，表示悬浮窗正在运行
+                    Log.d(TAG, "悬浮窗状态检查：运行中")
+                }
             }
         }
     }
@@ -44,10 +55,23 @@ class FloatingWindowService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        
+        // 检查悬浮窗权限
+        if (!Settings.canDrawOverlays(this)) {
+            Log.e(TAG, "悬浮窗权限未授予")
+            Toast.makeText(this, "请先授予悬浮窗权限", Toast.LENGTH_LONG).show()
+            stopSelf()
+            return
+        }
+        
         createFloatingWindow()
         
         // 注册广播接收器
-        val filter = IntentFilter("com.example.vpnself.API_CAPTURED")
+        val filter = IntentFilter().apply {
+            addAction("com.example.vpnself.API_CAPTURED")
+            addAction("com.example.vpnself.PURCHASE_API_LEARNED")
+            addAction("com.example.vpnself.CHECK_FLOATING_WINDOW")
+        }
         registerReceiver(apiReceiver, filter)
         
         Log.d(TAG, "悬浮窗服务已创建")
@@ -101,16 +125,29 @@ class FloatingWindowService : Service() {
             statusText = view.findViewById(R.id.tv_status)
             startButton = view.findViewById(R.id.btn_start)
             stopButton = view.findViewById(R.id.btn_stop)
+            captureButton = view.findViewById(R.id.btn_capture)
             apiCountText = view.findViewById(R.id.tv_api_count)
             
             // 设置点击事件
+            captureButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service?.isCapturingActive() == true) {
+                    service.stopCapture()
+                } else {
+                    service?.startCapture()
+                }
+                updateStatus()
+            }
+            
             startButton.setOnClickListener {
                 AutoBuyAccessibilityService.instance?.startScript()
                 updateStatus()
             }
             
             stopButton.setOnClickListener {
-                AutoBuyAccessibilityService.instance?.stopScript()
+                val service = AutoBuyAccessibilityService.instance
+                service?.stopScript()
+                service?.stopCapture()
                 updateStatus()
             }
             
@@ -121,6 +158,7 @@ class FloatingWindowService : Service() {
             
             // 关闭按钮
             view.findViewById<Button>(R.id.btn_close).setOnClickListener {
+                AutoBuyAccessibilityService.instance?.stopAll()
                 stopSelf()
             }
         }
@@ -129,12 +167,48 @@ class FloatingWindowService : Service() {
     private fun updateStatus() {
         val service = AutoBuyAccessibilityService.instance
         if (service != null) {
-            statusText.text = "状态: ${service.getScriptStatus()}"
+            val status = service.getScriptStatus()
+            statusText.text = "状态: $status"
+            
+            // 更新按钮状态和颜色
+            updateButtonStates(service)
             updateApiCount()
         } else {
             statusText.text = "状态: 服务未启动"
             apiCountText.text = "API: 0"
+            
+            // 禁用所有按钮
+            captureButton.isEnabled = false
+            startButton.isEnabled = false
+            stopButton.isEnabled = false
         }
+    }
+    
+    private fun updateButtonStates(service: AutoBuyAccessibilityService) {
+        val isCapturing = service.isCapturingActive()
+        val isRunning = service.isScriptRunning()
+        val hasLearnedApi = service.hasLearnedPurchaseApi()
+        
+        // 更新抓包按钮
+        captureButton.text = if (isCapturing) "停止抓包" else "开始抓包"
+        captureButton.setBackgroundResource(
+            if (isCapturing) R.drawable.btn_stop else R.drawable.btn_capture
+        )
+        captureButton.isEnabled = true
+        
+        // 更新开始按钮
+        startButton.isEnabled = !isRunning && hasLearnedApi
+        startButton.setBackgroundResource(
+            if (isRunning) R.drawable.btn_stop else R.drawable.btn_start
+        )
+        
+        // 更新停止按钮  
+        stopButton.isEnabled = isRunning || isCapturing
+        
+        // 更新API状态显示
+        val apiStatus = if (hasLearnedApi) " ✓" else ""
+        updateApiCount()
+        apiCountText.text = "${apiCountText.text}$apiStatus"
     }
     
     private fun updateApiCount() {
