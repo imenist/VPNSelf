@@ -298,7 +298,7 @@ class ScriptActivity : ComponentActivity() {
         }
     }
     
-        @Composable
+    @Composable
     fun FloatingWindowCard() {
         Card(
             modifier = Modifier.fillMaxWidth()
@@ -425,4 +425,5 @@ class ScriptActivity : ComponentActivity() {
             Toast.makeText(this, "关闭悬浮窗失败: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
+
 } 

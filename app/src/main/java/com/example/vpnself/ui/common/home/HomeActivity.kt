@@ -26,12 +26,7 @@ class HomeActivity : ComponentActivity() {
         }
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == HomeViewModel.VPN_REQUEST_CODE && resultCode == RESULT_OK) {
-            viewModel.onVpnPermissionGranted(this)
-        }
-    }
+
 }
 
 @Composable
@@ -72,7 +67,7 @@ fun HomeScreen(
                         if (isCapturing) {
                             viewModel.stopCapture(context)
                         } else {
-                            viewModel.startCapture(context as HomeActivity)
+                            viewModel.startCapture(context)
                         }
                     },
                     colors = ButtonDefaults.buttonColors(

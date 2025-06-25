@@ -11,6 +11,8 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -29,6 +31,17 @@ class NetworkMonitor(private val context: Context) {
     private val capturedRequests = ConcurrentHashMap<String, CapturedRequest>()
     private val apiCallCount = AtomicInteger(0)
     
+    // 新增：内部日志收集
+    private val currentSessionLogs = mutableListOf<LogEntry>()
+    private val allSessionsHistory = mutableListOf<CaptureSession>()
+    private val maxLogEntries = 500 // 增加单次会话日志数量
+    private val maxSessions = 50 // 最多保存50个会话
+    private val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.getDefault())
+    private val sessionDateFormat = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
+    private var isCapturing = false
+    private var captureStartTime = 0L
+    private var currentSessionId = ""
+    
     // API分类
     private val stockCheckApis = mutableSetOf<String>()
     private val purchaseApis = mutableSetOf<String>()
@@ -37,6 +50,21 @@ class NetworkMonitor(private val context: Context) {
     // 回调接口
     private var onStockFoundCallback: ((Boolean) -> Unit)? = null
     private var onApiCapturedCallback: ((CapturedRequest) -> Unit)? = null
+    private var onLogUpdatedCallback: ((List<LogEntry>) -> Unit)? = null
+    
+    /**
+     * 日志条目数据类
+     */
+    data class LogEntry(
+        val timestamp: String,
+        val level: LogLevel,
+        val message: String,
+        val details: String? = null
+    )
+    
+    enum class LogLevel {
+        INFO, DEBUG, ERROR, SUCCESS
+    }
     
     /**
      * 捕获的请求数据类
@@ -49,9 +77,9 @@ class NetworkMonitor(private val context: Context) {
         val requestBody: String,
         val responseBody: String,
         val timestamp: Long,
-        val isStockApi: Boolean = false,
-        val isPurchaseApi: Boolean = false,
-        val hasStock: Boolean? = null
+        var isStockApi: Boolean = false,
+        var isPurchaseApi: Boolean = false,
+        var hasStock: Boolean? = null
     )
     
     /**
@@ -66,20 +94,126 @@ class NetworkMonitor(private val context: Context) {
     )
     
     init {
+        addLog(LogLevel.INFO, "网络监控器初始化完成", "NetworkMonitor实例已创建，等待开始抓包")
         Log.d(TAG, "网络监控器初始化完成")
     }
     
     /**
+     * 添加内部日志
+     */
+    fun addLog(level: LogLevel, message: String, details: String? = null) {
+        synchronized(currentSessionLogs) {
+            // 限制当前会话日志数量
+            if (currentSessionLogs.size >= maxLogEntries) {
+                currentSessionLogs.removeAt(0)
+            }
+            
+            val logEntry = LogEntry(
+                timestamp = dateFormat.format(Date()),
+                level = level,
+                message = message,
+                details = details
+            )
+            
+            currentSessionLogs.add(logEntry)
+            
+            // 触发UI更新回调
+            onLogUpdatedCallback?.invoke(currentSessionLogs.toList())
+        }
+        
+        // 同时输出到系统日志
+        when (level) {
+            LogLevel.INFO -> Log.i(TAG, message + if (details != null) " - $details" else "")
+            LogLevel.DEBUG -> Log.d(TAG, message + if (details != null) " - $details" else "")
+            LogLevel.ERROR -> Log.e(TAG, message + if (details != null) " - $details" else "")
+            LogLevel.SUCCESS -> Log.i(TAG, "✓ $message" + if (details != null) " - $details" else "")
+        }
+    }
+    
+    /**
+     * 开始抓包
+     */
+    fun startCapture() {
+        isCapturing = true
+        captureStartTime = System.currentTimeMillis()
+        currentSessionId = "session_${captureStartTime}"
+        
+        // 清除当前会话数据，但保留历史会话
+        clearCurrentSessionData()
+        
+        addLog(LogLevel.SUCCESS, "🚀 抓包会话已开始", "会话ID: $currentSessionId")
+        addLog(LogLevel.INFO, "⏳ 等待WebView加载和脚本注入", "请确保已正确配置WebView")
+    }
+    
+    /**
+     * 停止抓包
+     */
+    fun stopCapture(): CaptureSession {
+        isCapturing = false
+        val endTime = System.currentTimeMillis()
+        val duration = (endTime - captureStartTime) / 1000
+        
+        addLog(LogLevel.SUCCESS, "🏁 抓包会话已完成", 
+            "持续时间: ${duration}秒, 捕获请求: ${capturedRequests.size}个, 日志条目: ${currentSessionLogs.size}个")
+        
+        // 计算流量统计
+        var uploadBytes = 0L
+        var downloadBytes = 0L
+        capturedRequests.values.forEach { request ->
+            uploadBytes += request.requestBody.length
+            downloadBytes += request.responseBody.length
+        }
+        
+        val session = CaptureSession(
+            sessionId = currentSessionId,
+            sessionName = sessionDateFormat.format(Date(captureStartTime)),
+            startTime = captureStartTime,
+            endTime = endTime,
+            duration = duration.toInt(),
+            capturedRequests = capturedRequests.values.toList(),
+            logs = currentSessionLogs.toList(),
+            requestCount = capturedRequests.size,
+            uploadBytes = uploadBytes,
+            downloadBytes = downloadBytes
+        )
+        
+        // 保存会话到历史记录
+        saveSessionToHistory(session)
+        
+        return session
+    }
+    
+    /**
+     * 抓包会话数据类
+     */
+    data class CaptureSession(
+        val sessionId: String,
+        val sessionName: String, // 显示名称，如 "05-30 14:32:15"
+        val startTime: Long,
+        val endTime: Long,
+        val duration: Int,
+        val capturedRequests: List<CapturedRequest>,
+        val logs: List<LogEntry>,
+        val requestCount: Int,
+        val uploadBytes: Long = 0,
+        val downloadBytes: Long = 0
+    )
+
+    /**
      * 创建用于注入的JavaScript代码
      */
     fun getInjectionScript(): String {
+        addLog(LogLevel.DEBUG, "准备注入JavaScript监控脚本", "脚本包含XHR和Fetch API拦截")
+        
         return """
             (function() {
-                console.log('抢购脚本网络监控已注入');
+                console.log('🚀 抢购脚本网络监控开始注入...');
                 
                 // 保存原始的网络请求方法
                 const originalXHR = window.XMLHttpRequest;
                 const originalFetch = window.fetch;
+                
+                console.log('📡 开始Hook XMLHttpRequest...');
                 
                 // Hook XMLHttpRequest
                 window.XMLHttpRequest = function() {
@@ -95,30 +229,39 @@ class NetworkMonitor(private val context: Context) {
                     xhr.open = function(method, url, async, user, password) {
                         requestMethod = method;
                         requestUrl = url;
+                        console.log('🔄 XHR请求开始:', method, url);
                         return originalOpen.call(this, method, url, async, user, password);
                     };
                     
                     xhr.setRequestHeader = function(header, value) {
                         requestHeaders[header] = value;
+                        console.log('📝 XHR设置请求头:', header, '=', value);
                         return XMLHttpRequest.prototype.setRequestHeader.call(this, header, value);
                     };
                     
                     xhr.send = function(body) {
                         requestBody = body || '';
+                        console.log('📤 XHR发送请求:', requestMethod, requestUrl, '请求体长度:', requestBody.length);
                         
                         this.addEventListener('readystatechange', function() {
                             if (this.readyState === 4) {
                                 try {
-                                    NetworkMonitor.onNetworkRequest(
-                                        requestMethod,
-                                        requestUrl,
-                                        JSON.stringify(requestHeaders),
-                                        requestBody,
-                                        this.responseText,
-                                        this.status
-                                    );
+                                    console.log('📥 XHR响应接收:', this.status, '响应长度:', this.responseText.length);
+                                    if (window.NetworkMonitor) {
+                                        console.log('✅ 调用NetworkMonitor.onNetworkRequest');
+                                        NetworkMonitor.onNetworkRequest(
+                                            requestMethod,
+                                            requestUrl,
+                                            JSON.stringify(requestHeaders),
+                                            requestBody,
+                                            this.responseText,
+                                            this.status
+                                        );
+                                    } else {
+                                        console.error('❌ NetworkMonitor接口未找到！请检查addJavascriptInterface调用');
+                                    }
                                 } catch(e) {
-                                    console.error('网络监控错误:', e);
+                                    console.error('💥 XHR网络监控错误:', e);
                                 }
                             }
                         });
@@ -129,45 +272,88 @@ class NetworkMonitor(private val context: Context) {
                     return xhr;
                 };
                 
+                console.log('🌐 开始Hook Fetch API...');
+                
                 // Hook Fetch API
                 window.fetch = function(url, options = {}) {
                     const method = options.method || 'GET';
                     const headers = options.headers || {};
                     const body = options.body || '';
                     
+                    console.log('🔄 Fetch请求开始:', method, url, '请求体长度:', body.length);
+                    
                     return originalFetch.call(this, url, options)
                         .then(response => {
+                            console.log('📥 Fetch响应状态:', response.status, response.statusText);
+                            
                             // 克隆响应以便读取
                             const clonedResponse = response.clone();
                             
                             clonedResponse.text().then(responseText => {
                                 try {
-                                    NetworkMonitor.onNetworkRequest(
-                                        method,
-                                        url,
-                                        JSON.stringify(headers),
-                                        body,
-                                        responseText,
-                                        response.status
-                                    );
+                                    console.log('📥 Fetch响应内容长度:', responseText.length);
+                                    if (window.NetworkMonitor) {
+                                        console.log('✅ 调用NetworkMonitor.onNetworkRequest (Fetch)');
+                                        NetworkMonitor.onNetworkRequest(
+                                            method,
+                                            url,
+                                            JSON.stringify(headers),
+                                            body,
+                                            responseText,
+                                            response.status
+                                        );
+                                    } else {
+                                        console.error('❌ NetworkMonitor接口未找到！请检查addJavascriptInterface调用');
+                                    }
                                 } catch(e) {
-                                    console.error('Fetch监控错误:', e);
+                                    console.error('💥 Fetch监控错误:', e);
                                 }
+                            }).catch(err => {
+                                console.error('💥 读取Fetch响应失败:', err);
                             });
                             
                             return response;
+                        })
+                        .catch(error => {
+                            console.error('💥 Fetch请求失败:', error);
+                            throw error;
                         });
                 };
+                
+                console.log('👆 开始监听按钮点击...');
                 
                 // 监听按钮点击
                 document.addEventListener('click', function(event) {
                     const target = event.target;
                     const text = target.textContent || target.innerText || '';
                     
-                    if (text.includes('买') || text.includes('购') || text.includes('抢')) {
+                    console.log('👆 按钮点击:', text);
+                    if (window.NetworkMonitor) {
                         NetworkMonitor.onButtonClick(text, target.className || '');
                     }
                 }, true);
+                
+                // 监听所有网络相关事件
+                window.addEventListener('beforeunload', function() {
+                    console.log('🔄 页面即将卸载');
+                });
+                
+                // 定期检查NetworkMonitor接口是否可用
+                let checkCount = 0;
+                const checkInterval = setInterval(() => {
+                    checkCount++;
+                    if (window.NetworkMonitor) {
+                        console.log('✅ NetworkMonitor接口检查通过，第' + checkCount + '次检查');
+                        clearInterval(checkInterval);
+                    } else if (checkCount >= 10) {
+                        console.error('❌ NetworkMonitor接口检查失败，已尝试' + checkCount + '次');
+                        clearInterval(checkInterval);
+                    } else {
+                        console.warn('⏳ NetworkMonitor接口暂未就绪，第' + checkCount + '次检查...');
+                    }
+                }, 500);
+                
+                console.log('🎉 网络监控脚本注入完成！');
                 
             })();
         """.trimIndent()
@@ -187,10 +373,15 @@ class NetworkMonitor(private val context: Context) {
             statusCode: Int
         ) {
             try {
+                addLog(LogLevel.DEBUG, "接收到网络请求", "$method $url (状态码: $statusCode)")
+                
                 // 限制捕获的请求数量，防止内存溢出
-                if (capturedRequests.size > 50) {
+                if (capturedRequests.size > 100) {
                     val oldestKey = capturedRequests.keys.minOrNull()
-                    oldestKey?.let { capturedRequests.remove(it) }
+                    oldestKey?.let { 
+                        capturedRequests.remove(it)
+                        addLog(LogLevel.DEBUG, "移除最旧的请求", "ID: $it (内存管理)")
+                    }
                 }
                 
                 val headers = parseHeaders(headersJson)
@@ -199,63 +390,73 @@ class NetworkMonitor(private val context: Context) {
                     method = method,
                     url = url,
                     headers = headers,
-                    requestBody = requestBody.take(500), // 限制请求体大小
-                    responseBody = responseBody.take(1000), // 限制响应体大小
+                    requestBody = requestBody.take(2000),
+                    responseBody = responseBody.take(3000),
                     timestamp = System.currentTimeMillis()
                 )
                 
-                // 分析请求类型
+                // 分析请求类型（不影响保存）
                 analyzeRequest(request)
                 
-                // 存储请求
+                // 无条件存储所有请求
                 capturedRequests[request.id] = request
                 
                 // 触发回调
                 onApiCapturedCallback?.invoke(request)
                 
-                Log.d(TAG, "捕获网络请求: ${request.method} ${request.url}")
+                addLog(LogLevel.SUCCESS, "成功捕获API请求 #${request.id}", 
+                    "${request.method} ${request.url} (请求体: ${request.requestBody.length}字符, 响应体: ${request.responseBody.length}字符)")
+                
+                addLog(LogLevel.INFO, "当前统计", 
+                    "总请求: ${capturedRequests.size}, 库存API: ${stockCheckApis.size}, 购买API: ${purchaseApis.size}")
                 
             } catch (e: Exception) {
-                Log.e(TAG, "处理网络请求失败: ${e.message}")
+                addLog(LogLevel.ERROR, "处理网络请求失败", "错误: ${e.message}")
             }
         }
         
         @JavascriptInterface
         fun onButtonClick(buttonText: String, className: String) {
-            Log.d(TAG, "按钮点击: $buttonText, 类名: $className")
+            addLog(LogLevel.DEBUG, "按钮点击事件", "文本: '$buttonText', 类名: '$className'")
         }
-        
-
     }
     
     /**
-     * 分析请求类型和内容
+     * 分析请求类型和内容（仅用于分类，不影响保存）
      */
     private fun analyzeRequest(request: CapturedRequest) {
-        val url = request.url.lowercase()
-        val responseBody = request.responseBody
-        
-        // 判断是否为库存查询API
-        if (isStockCheckApi(url, responseBody)) {
-            stockCheckApis.add(request.url)
-            request.copy(isStockApi = true, hasStock = parseStockInfo(responseBody))
+        try {
+            val url = request.url.lowercase()
+            val responseBody = request.responseBody
+            
+            // 判断是否为库存查询API
+            if (isStockCheckApi(url, responseBody)) {
+                stockCheckApis.add(request.url)
+                request.isStockApi = true
+                request.hasStock = parseStockInfo(responseBody)
+                Log.d(TAG, "识别为库存API: ${request.url}, 有库存: ${request.hasStock}")
+            }
+            
+            // 判断是否为购买API
+            if (isPurchaseApi(url, request.requestBody)) {
+                purchaseApis.add(request.url)
+                request.isPurchaseApi = true
+                Log.d(TAG, "识别为购买API: ${request.url}")
+            }
+            
+            // 提取用户token
+            extractUserToken(request.headers)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "分析请求失败", e)
         }
-        
-        // 判断是否为购买API
-        if (isPurchaseApi(url, request.requestBody)) {
-            purchaseApis.add(request.url)
-            request.copy(isPurchaseApi = true)
-        }
-        
-        // 提取用户token
-        extractUserToken(request.headers)
     }
     
     /**
      * 判断是否为库存查询API
      */
     private fun isStockCheckApi(url: String, responseBody: String): Boolean {
-        val stockKeywords = listOf("stock", "inventory", "available", "quantity", "库存", "余量")
+        val stockKeywords = listOf("stock", "inventory", "available", "quantity", "库存", "余量", "商品", "product")
         val urlContainsStock = stockKeywords.any { url.contains(it) }
         val responseContainsStock = stockKeywords.any { responseBody.contains(it) }
         
@@ -266,7 +467,7 @@ class NetworkMonitor(private val context: Context) {
      * 判断是否为购买API
      */
     private fun isPurchaseApi(url: String, requestBody: String): Boolean {
-        val purchaseKeywords = listOf("buy", "purchase", "order", "cart", "购买", "下单", "添加")
+        val purchaseKeywords = listOf("buy", "purchase", "order", "cart", "购买", "下单", "添加", "支付", "pay")
         val urlContainsPurchase = purchaseKeywords.any { url.contains(it) }
         val bodyContainsPurchase = purchaseKeywords.any { requestBody.contains(it) }
         
@@ -278,13 +479,15 @@ class NetworkMonitor(private val context: Context) {
      */
     private fun parseStockInfo(responseBody: String): Boolean {
         return try {
+            Log.d(TAG, "开始解析库存信息: ${responseBody.take(200)}")
+            
             val jsonElement = JsonParser.parseString(responseBody)
             
             if (jsonElement.isJsonObject) {
                 val jsonObject = jsonElement.asJsonObject
                 
                 // 常见的库存字段
-                val stockFields = listOf("stock", "available", "inventory", "quantity", "inStock")
+                val stockFields = listOf("stock", "available", "inventory", "quantity", "inStock", "库存", "余量")
                 
                 for (field in stockFields) {
                     if (jsonObject.has(field)) {
@@ -292,9 +495,14 @@ class NetworkMonitor(private val context: Context) {
                         if (stockValue.isJsonPrimitive) {
                             val primitive = stockValue.asJsonPrimitive
                             if (primitive.isBoolean) {
-                                return primitive.asBoolean
+                                val hasStock = primitive.asBoolean
+                                Log.d(TAG, "找到库存字段 $field: $hasStock")
+                                return hasStock
                             } else if (primitive.isNumber) {
-                                return primitive.asInt > 0
+                                val stockCount = primitive.asInt
+                                val hasStock = stockCount > 0
+                                Log.d(TAG, "找到库存数量字段 $field: $stockCount, 有库存: $hasStock")
+                                return hasStock
                             }
                         }
                     }
@@ -302,15 +510,19 @@ class NetworkMonitor(private val context: Context) {
             }
             
             // 如果没有找到明确的库存字段，检查文本内容
-            !responseBody.contains("缺货") && 
-            !responseBody.contains("售完") && 
-            !responseBody.contains("无库存") &&
-            !responseBody.contains("\"stock\":0") &&
-            !responseBody.contains("\"available\":false")
+            val hasStock = !responseBody.contains("缺货") && 
+                          !responseBody.contains("售完") && 
+                          !responseBody.contains("无库存") &&
+                          !responseBody.contains("\"stock\":0") &&
+                          !responseBody.contains("\"available\":false")
+            
+            Log.d(TAG, "基于文本内容判断库存: $hasStock")
+            hasStock
             
         } catch (e: Exception) {
-            Log.e(TAG, "解析库存信息失败: ${e.message}")
-            false
+            Log.e(TAG, "解析库存信息失败", e)
+            // 默认返回true，避免过度过滤
+            true
         }
     }
     
@@ -464,13 +676,184 @@ class NetworkMonitor(private val context: Context) {
     }
     
     /**
-     * 清除所有捕获的数据
+     * 清除当前会话数据（但保留历史会话）
      */
-    fun clearData() {
+    private fun clearCurrentSessionData() {
         capturedRequests.clear()
         stockCheckApis.clear()
         purchaseApis.clear()
         userTokens.clear()
         apiCallCount.set(0)
+        currentSessionLogs.clear()
+        addLog(LogLevel.INFO, "🔄 当前会话数据已清除", "准备开始新的抓包会话")
+    }
+    
+    /**
+     * 保存会话到历史记录
+     */
+    private fun saveSessionToHistory(session: CaptureSession) {
+        synchronized(allSessionsHistory) {
+            // 限制历史会话数量
+            if (allSessionsHistory.size >= maxSessions) {
+                allSessionsHistory.removeAt(0)
+            }
+            allSessionsHistory.add(session)
+            addLog(LogLevel.SUCCESS, "💾 会话已保存到历史记录", "会话名称: ${session.sessionName}")
+        }
+    }
+    
+    /**
+     * 清除所有历史数据（包括当前会话和历史会话）
+     */
+    fun clearAllData() {
+        clearCurrentSessionData()
+        allSessionsHistory.clear()
+        addLog(LogLevel.INFO, "🗑️ 所有历史数据已清除", "包括当前会话和历史会话")
+    }
+    
+    /**
+     * 获取当前会话日志
+     */
+    fun getCurrentSessionLogs(): List<LogEntry> {
+        return synchronized(currentSessionLogs) {
+            currentSessionLogs.toList()
+        }
+    }
+    
+    /**
+     * 获取所有历史会话
+     */
+    fun getAllSessions(): List<CaptureSession> {
+        return synchronized(allSessionsHistory) {
+            allSessionsHistory.toList().sortedByDescending { it.startTime }
+        }
+    }
+    
+    /**
+     * 获取指定会话的详细信息
+     */
+    fun getSessionById(sessionId: String): CaptureSession? {
+        return allSessionsHistory.find { it.sessionId == sessionId }
+    }
+    
+    /**
+     * 设置日志更新回调
+     */
+    fun setOnLogUpdatedCallback(callback: (List<LogEntry>) -> Unit) {
+        onLogUpdatedCallback = callback
+        // 立即回调当前日志
+        callback(getCurrentSessionLogs())
+    }
+    
+    /**
+     * 获取抓包状态
+     */
+    fun isCapturing(): Boolean {
+        return isCapturing
+    }
+    
+    /**
+     * 获取JavaScript接口实例
+     */
+    fun getJavaScriptInterface(): NetworkJavaScriptInterface {
+        return NetworkJavaScriptInterface()
+    }
+    
+    /**
+     * 获取所有捕获的请求的详细信息
+     */
+    fun getAllRequestsDetails(): String {
+        val sb = StringBuilder()
+        sb.append("=== 网络请求监控报告 ===\n")
+        sb.append("总请求数: ${capturedRequests.size}\n")
+        sb.append("库存API数: ${stockCheckApis.size}\n")
+        sb.append("购买API数: ${purchaseApis.size}\n")
+        sb.append("用户Token数: ${userTokens.size}\n\n")
+        
+        capturedRequests.values.forEachIndexed { index, request ->
+            sb.append("--- 请求 #${index + 1} ---\n")
+            sb.append("ID: ${request.id}\n")
+            sb.append("方法: ${request.method}\n")
+            sb.append("URL: ${request.url}\n")
+            sb.append("时间: ${java.util.Date(request.timestamp)}\n")
+            sb.append("是否库存API: ${request.isStockApi}\n")
+            sb.append("是否购买API: ${request.isPurchaseApi}\n")
+            sb.append("请求头数量: ${request.headers.size}\n")
+            sb.append("请求体长度: ${request.requestBody.length}\n")
+            sb.append("响应体长度: ${request.responseBody.length}\n")
+            if (request.isStockApi) {
+                sb.append("库存状态: ${request.hasStock}\n")
+            }
+            sb.append("\n")
+        }
+        
+        return sb.toString()
+    }
+    
+    /**
+     * 配置WebView以支持网络监控的辅助方法
+     * 这是一个使用示例，请在您的Activity中调用
+     */
+    fun configureWebView(webView: WebView) {
+        try {
+            addLog(LogLevel.INFO, "开始配置WebView", "启用JavaScript和相关设置")
+            
+            // 启用JavaScript
+            webView.settings.javaScriptEnabled = true
+            webView.settings.domStorageEnabled = true
+            webView.settings.allowFileAccess = true
+            webView.settings.allowContentAccess = true
+            webView.settings.allowFileAccessFromFileURLs = true
+            webView.settings.allowUniversalAccessFromFileURLs = true
+            
+            addLog(LogLevel.DEBUG, "WebView基础设置完成", "JavaScript已启用")
+            
+            // 添加JavaScript接口
+            webView.addJavascriptInterface(getJavaScriptInterface(), "NetworkMonitor")
+            addLog(LogLevel.SUCCESS, "JavaScript接口已添加", "接口名称: NetworkMonitor")
+            
+            // 注入监控脚本
+            webView.setWebViewClient(object : android.webkit.WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    addLog(LogLevel.INFO, "页面开始加载", "URL: $url")
+                }
+                
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    addLog(LogLevel.INFO, "页面加载完成", "URL: $url")
+                    addLog(LogLevel.DEBUG, "开始注入网络监控脚本", "等待JavaScript执行...")
+                    
+                    view?.evaluateJavascript(getInjectionScript()) { result ->
+                        addLog(LogLevel.SUCCESS, "脚本注入完成", "执行结果: $result")
+                    }
+                }
+                
+                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                    super.onReceivedError(view, errorCode, description, failingUrl)
+                    addLog(LogLevel.ERROR, "页面加载出错", "错误码: $errorCode, 描述: $description, URL: $failingUrl")
+                }
+            })
+            
+            // 启用Chrome调试
+            webView.setWebChromeClient(object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
+                    consoleMessage?.let { msg ->
+                        val level = when (msg.messageLevel()) {
+                            android.webkit.ConsoleMessage.MessageLevel.ERROR -> LogLevel.ERROR
+                            android.webkit.ConsoleMessage.MessageLevel.WARNING -> LogLevel.DEBUG
+                            else -> LogLevel.DEBUG
+                        }
+                        addLog(level, "浏览器控制台", "${msg.message()} (${msg.sourceId()}:${msg.lineNumber()})")
+                    }
+                    return super.onConsoleMessage(consoleMessage)
+                }
+            })
+            
+            addLog(LogLevel.SUCCESS, "WebView配置完成", "网络监控已启用，等待页面加载")
+            
+        } catch (e: Exception) {
+            addLog(LogLevel.ERROR, "配置WebView失败", "错误: ${e.message}")
+        }
     }
 } 

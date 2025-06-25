@@ -172,7 +172,6 @@ class AutoBuyAccessibilityService : AccessibilityService() {
             
             // 重置学习的API
             learnedPurchaseApi = null
-            networkMonitor.clearData()
             
             // 设置网络监控回调 - 学习模式
             networkMonitor.setOnApiCapturedCallback { request ->
@@ -290,9 +289,6 @@ class AutoBuyAccessibilityService : AccessibilityService() {
         
         // 重置JS注入状态
         isJsInjected.set(false)
-        
-        // 清除网络监控数据
-        networkMonitor.clearData()
         
         // 停止悬浮窗
         stopFloatingWindow()

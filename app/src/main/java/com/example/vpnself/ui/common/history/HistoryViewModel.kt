@@ -5,73 +5,69 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
 import java.util.*
-
-data class CaptureHistoryItem(
-    val id: String = UUID.randomUUID().toString(),
-    val timestamp: String,
-    val duration: Int, // 持续时间（秒）
-    val uploadBytes: Long = 0,
-    val downloadBytes: Long = 0,
-    val requestCount: Int = 0
-)
+import com.example.vpnself.script.NetworkMonitor
+import com.example.vpnself.script.NetworkMonitorManager
 
 class HistoryViewModel : ViewModel() {
-    private val _captureHistory = MutableStateFlow<List<CaptureHistoryItem>>(emptyList())
-    val captureHistory: StateFlow<List<CaptureHistoryItem>> = _captureHistory
+    // 使用NetworkMonitor的CaptureSession作为数据模型
+    private val _captureHistory = MutableStateFlow<List<NetworkMonitor.CaptureSession>>(emptyList())
+    val captureHistory: StateFlow<List<NetworkMonitor.CaptureSession>> = _captureHistory
+    
+    private val _selectedSession = MutableStateFlow<NetworkMonitor.CaptureSession?>(null)
+    val selectedSession: StateFlow<NetworkMonitor.CaptureSession?> = _selectedSession
+    
+    private val _currentLogs = MutableStateFlow<List<NetworkMonitor.LogEntry>>(emptyList())
+    val currentLogs: StateFlow<List<NetworkMonitor.LogEntry>> = _currentLogs
 
     init {
-        // TODO: 从数据库加载历史记录
-        loadMockData() // 临时使用模拟数据
+        // 从NetworkMonitor获取实时日志
+        loadRealTimeData()
     }
 
-    private fun loadMockData() {
-        val mockData = listOf(
-            CaptureHistoryItem(
-                timestamp = "05-30 10:44:45",
-                duration = 26
-            ),
-            CaptureHistoryItem(
-                timestamp = "05-21 12:53:27",
-                duration = 19
-            ),
-            CaptureHistoryItem(
-                timestamp = "05-18 10:44:36",
-                duration = 15
-            ),
-            CaptureHistoryItem(
-                timestamp = "04-28 02:30:13",
-                duration = 16
-            )
-        )
-        _captureHistory.value = mockData
+    fun loadRealTimeData() {
+        // 获取NetworkMonitor实例的当前日志和历史会话
+        val networkMonitor = NetworkMonitorManager.getCurrentInstance()
+        if (networkMonitor != null) {
+            // 设置日志更新回调
+            networkMonitor.setOnLogUpdatedCallback { logs ->
+                _currentLogs.value = logs
+            }
+            
+            // 初始化当前日志
+            _currentLogs.value = networkMonitor.getCurrentSessionLogs()
+            
+            // 加载历史会话
+            _captureHistory.value = networkMonitor.getAllSessions()
+        }
     }
 
-    fun onHistoryItemClick(item: CaptureHistoryItem) {
-        // TODO: 导航到详情页面
+    fun onHistoryItemClick(session: NetworkMonitor.CaptureSession) {
+        // 显示选中会话的详细信息
+        _selectedSession.value = session
     }
-
-    fun addCaptureHistory(
-        duration: Int,
-        uploadBytes: Long = 0,
-        downloadBytes: Long = 0,
-        requestCount: Int = 0
-    ) {
-        val dateFormat = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault())
-        val timestamp = dateFormat.format(Date())
-        
-        val newItem = CaptureHistoryItem(
-            timestamp = timestamp,
-            duration = duration,
-            uploadBytes = uploadBytes,
-            downloadBytes = downloadBytes,
-            requestCount = requestCount
-        )
-        
-        _captureHistory.value = listOf(newItem) + _captureHistory.value
+    
+    /**
+     * 更新当前实时日志
+     */
+    fun updateCurrentLogs(logs: List<NetworkMonitor.LogEntry>) {
+        _currentLogs.value = logs
+    }
+    
+    /**
+     * 刷新历史记录
+     */
+    fun refreshHistory() {
+        val networkMonitor = NetworkMonitorManager.getCurrentInstance()
+        if (networkMonitor != null) {
+            _captureHistory.value = networkMonitor.getAllSessions()
+        }
     }
 
     fun clearHistory() {
-        // TODO: 清除数据库中的历史记录
+        val networkMonitor = NetworkMonitorManager.getCurrentInstance()
+        networkMonitor?.clearAllData()
         _captureHistory.value = emptyList()
+        _selectedSession.value = null
+        _currentLogs.value = emptyList()
     }
 } 
