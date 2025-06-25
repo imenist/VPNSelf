@@ -10,10 +10,12 @@ import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.provider.Settings
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.example.vpnself.R
@@ -27,12 +29,19 @@ class FloatingWindowService : Service() {
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
     private var isShowing = false
+    private var layoutParams: WindowManager.LayoutParams? = null
     
     private lateinit var statusText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var captureButton: Button
     private lateinit var apiCountText: TextView
+    
+    // 拖动相关变量
+    private var initialX: Int = 0
+    private var initialY: Int = 0
+    private var initialTouchX: Float = 0f
+    private var initialTouchY: Float = 0f
     
     private val apiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -95,7 +104,7 @@ class FloatingWindowService : Service() {
             initViews()
             
             // 设置悬浮窗参数
-            val params = WindowManager.LayoutParams(
+            layoutParams = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -107,8 +116,11 @@ class FloatingWindowService : Service() {
                 y = 100
             }
             
+            // 设置拖动功能
+            setupDragFunctionality()
+            
             // 添加到窗口管理器
-            windowManager?.addView(floatingView, params)
+            windowManager?.addView(floatingView, layoutParams)
             isShowing = true
             
             // 更新状态
@@ -151,16 +163,26 @@ class FloatingWindowService : Service() {
                 updateStatus()
             }
             
+            // 为按钮设置空的触摸监听器，阻止拖动事件传递
+            val buttonTouchListener = View.OnTouchListener { _, _ -> false }
+            captureButton.setOnTouchListener(buttonTouchListener)
+            startButton.setOnTouchListener(buttonTouchListener)
+            stopButton.setOnTouchListener(buttonTouchListener)
+            
             // 最小化按钮
-            view.findViewById<Button>(R.id.btn_minimize).setOnClickListener {
+            val minimizeButton = view.findViewById<Button>(R.id.btn_minimize)
+            minimizeButton.setOnClickListener {
                 minimizeWindow()
             }
+            minimizeButton.setOnTouchListener(buttonTouchListener)
             
             // 关闭按钮
-            view.findViewById<Button>(R.id.btn_close).setOnClickListener {
+            val closeButton = view.findViewById<Button>(R.id.btn_close)
+            closeButton.setOnClickListener {
                 AutoBuyAccessibilityService.instance?.stopAll()
                 stopSelf()
             }
+            closeButton.setOnTouchListener(buttonTouchListener)
         }
     }
     
@@ -230,6 +252,140 @@ class FloatingWindowService : Service() {
                 miniView.visibility = View.GONE
                 fullView.visibility = View.VISIBLE
             }
+        }
+    }
+    
+    private fun setupDragFunctionality() {
+        floatingView?.let { view ->
+            // 创建触摸监听器
+            val touchListener = View.OnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        // 记录初始位置
+                        initialX = layoutParams?.x ?: 0
+                        initialY = layoutParams?.y ?: 0
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        Log.d(TAG, "拖动开始: 初始位置($initialX, $initialY), 触摸位置(${initialTouchX}, ${initialTouchY})")
+                        true
+                    }
+                    
+                    MotionEvent.ACTION_MOVE -> {
+                        // 计算移动偏移量
+                        val deltaX = (event.rawX - initialTouchX).toInt()
+                        val deltaY = (event.rawY - initialTouchY).toInt()
+                        
+                        // 更新悬浮窗位置
+                        layoutParams?.let { params ->
+                            params.x = initialX + deltaX
+                            params.y = initialY + deltaY
+                            
+                            // 限制悬浮窗不超出屏幕边界
+                            limitWindowBounds(params)
+                            
+                            try {
+                                windowManager?.updateViewLayout(floatingView, params)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "更新悬浮窗位置失败: ${e.message}")
+                            }
+                        }
+                        true
+                    }
+                    
+                    MotionEvent.ACTION_UP -> {
+                        // 拖动结束，检查是否为点击事件
+                        val deltaX = Math.abs(event.rawX - initialTouchX)
+                        val deltaY = Math.abs(event.rawY - initialTouchY)
+                        
+                        Log.d(TAG, "拖动结束: 移动距离($deltaX, $deltaY)")
+                        
+                        // 如果移动距离很小，认为是点击事件，处理最小化窗口逻辑
+                        if (deltaX < 10 && deltaY < 10) {
+                            val miniView = view.findViewById<LinearLayout>(R.id.mini_layout)
+                            if (miniView.visibility == View.VISIBLE) {
+                                Log.d(TAG, "点击最小化窗口")
+                                minimizeWindow()
+                            }
+                        }
+                        true
+                    }
+                    
+                    else -> false
+                }
+            }
+            
+            // 只为最小化视图和背景区域设置拖动
+            val miniLayout = view.findViewById<LinearLayout>(R.id.mini_layout)
+            miniLayout.setOnTouchListener(touchListener)
+            
+            // 为整个悬浮窗根视图设置拖动，但会被子视图的触摸事件覆盖
+            view.setOnTouchListener(touchListener)
+        }
+    }
+    
+    private fun limitWindowBounds(params: WindowManager.LayoutParams) {
+        try {
+            val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val size = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                // Android 11+ 使用新API
+                val metrics = windowManager.currentWindowMetrics
+                val bounds = metrics.bounds
+                android.graphics.Point(bounds.width(), bounds.height())
+            } else {
+                // Android 10及以下使用旧API
+                @Suppress("DEPRECATION")
+                val display = windowManager.defaultDisplay
+                val point = android.graphics.Point()
+                @Suppress("DEPRECATION")
+                display.getSize(point)
+                point
+            }
+            
+            val screenWidth = size.x
+            val screenHeight = size.y
+            
+            // 获取悬浮窗的宽高，如果还未测量则使用预估值
+            val viewWidth = if (floatingView?.width ?: 0 > 0) floatingView!!.width else 200
+            val viewHeight = if (floatingView?.height ?: 0 > 0) floatingView!!.height else 150
+            
+            // 限制X坐标，保留小边距
+            val margin = 10
+            when {
+                params.x < -margin -> params.x = -margin
+                params.x > screenWidth - viewWidth + margin -> params.x = screenWidth - viewWidth + margin
+            }
+            
+            // 限制Y坐标，考虑状态栏高度
+            val statusBarHeight = getStatusBarHeight()
+            when {
+                params.y < statusBarHeight -> params.y = statusBarHeight
+                params.y > screenHeight - viewHeight - navigationBarHeight() -> {
+                    params.y = screenHeight - viewHeight - navigationBarHeight()
+                }
+            }
+            
+            Log.d(TAG, "限制窗口位置: x=${params.x}, y=${params.y}, 屏幕: ${screenWidth}x${screenHeight}")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "限制窗口边界失败: ${e.message}")
+        }
+    }
+    
+    private fun getStatusBarHeight(): Int {
+        return try {
+            val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+            if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 75
+        } catch (e: Exception) {
+            75 // 默认状态栏高度
+        }
+    }
+    
+    private fun navigationBarHeight(): Int {
+        return try {
+            val resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+            if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
+        } catch (e: Exception) {
+            0
         }
     }
     
