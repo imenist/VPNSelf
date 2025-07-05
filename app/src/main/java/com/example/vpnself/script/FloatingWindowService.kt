@@ -36,6 +36,13 @@ class FloatingWindowService : Service() {
     private lateinit var stopButton: Button
     private lateinit var captureButton: Button
     private lateinit var apiCountText: TextView
+    private lateinit var coordinateInfoText: TextView
+    private lateinit var listJsButton: Button
+    private lateinit var statsButton: Button
+    private lateinit var clearJsButton: Button
+    private lateinit var checkDaodiequButton: Button
+    private lateinit var aggressiveClickButton: Button
+    private lateinit var httpInjectButton: Button
     
     // 拖动相关变量
     private var initialX: Int = 0
@@ -52,6 +59,12 @@ class FloatingWindowService : Service() {
                 "com.example.vpnself.PURCHASE_API_LEARNED" -> {
                     updateStatus()
                     Toast.makeText(this@FloatingWindowService, "已学习购买接口！", Toast.LENGTH_SHORT).show()
+                }
+                "com.example.vpnself.BUTTON_COORDINATE_CAPTURED" -> {
+                    updateButtonCoordinate(intent)
+                }
+                "com.example.vpnself.BUTTON_AUTO_CLICKED" -> {
+                    updateAutoClickInfo(intent)
                 }
                 "com.example.vpnself.CHECK_FLOATING_WINDOW" -> {
                     // 响应检查请求，表示悬浮窗正在运行
@@ -73,12 +86,27 @@ class FloatingWindowService : Service() {
             return
         }
         
+        // 确保NetworkMonitor实例存在
+        try {
+            val networkMonitor = NetworkMonitorManager.getInstance(this)
+            networkMonitor.addLog(
+                NetworkMonitor.LogLevel.INFO,
+                "🎮 悬浮窗服务已启动",
+                "启动时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}\n" +
+                "服务状态: ${ServiceHelper.getServiceStatusDescription(this)}"
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "无法添加悬浮窗启动日志: ${e.message}")
+        }
+        
         createFloatingWindow()
         
         // 注册广播接收器
         val filter = IntentFilter().apply {
             addAction("com.example.vpnself.API_CAPTURED")
             addAction("com.example.vpnself.PURCHASE_API_LEARNED")
+            addAction("com.example.vpnself.BUTTON_COORDINATE_CAPTURED")
+            addAction("com.example.vpnself.BUTTON_AUTO_CLICKED")
             addAction("com.example.vpnself.CHECK_FLOATING_WINDOW")
         }
         registerReceiver(apiReceiver, filter)
@@ -139,12 +167,21 @@ class FloatingWindowService : Service() {
             stopButton = view.findViewById(R.id.btn_stop)
             captureButton = view.findViewById(R.id.btn_capture)
             apiCountText = view.findViewById(R.id.tv_api_count)
+            coordinateInfoText = view.findViewById(R.id.tv_coordinate_info)
+            listJsButton = view.findViewById(R.id.btn_list_js)
+            statsButton = view.findViewById(R.id.btn_stats)
+            clearJsButton = view.findViewById(R.id.btn_clear_js)
+            checkDaodiequButton = view.findViewById(R.id.btn_check_daodiequ)
+            aggressiveClickButton = view.findViewById(R.id.btn_aggressive_click)
+            httpInjectButton = view.findViewById(R.id.btn_http_inject)
             
             // 设置点击事件
             captureButton.setOnClickListener {
                 val service = AutoBuyAccessibilityService.instance
                 if (service?.isCapturingActive() == true) {
                     service.stopCapture()
+                    // 清空坐标显示
+                    clearCoordinateInfo()
                 } else {
                     service?.startCapture()
                 }
@@ -152,15 +189,84 @@ class FloatingWindowService : Service() {
             }
             
             startButton.setOnClickListener {
-                AutoBuyAccessibilityService.instance?.startScript()
-                updateStatus()
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.startScript()
+                    updateStatus()
+                    Toast.makeText(this@FloatingWindowService, "🚀 开始抢购脚本", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
             }
             
             stopButton.setOnClickListener {
                 val service = AutoBuyAccessibilityService.instance
                 service?.stopScript()
                 service?.stopCapture()
+                service?.clearCapturedCoordinates()
+                // 清空坐标显示
+                clearCoordinateInfo()
                 updateStatus()
+            }
+            
+            // JS文件和统计管理按钮点击事件
+            listJsButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.logSavedJavaScriptFiles()
+                    Toast.makeText(this@FloatingWindowService, "JS文件列表已输出到日志", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
+            }
+            
+            statsButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.logAutoClickStats()
+                    Toast.makeText(this@FloatingWindowService, "点击统计已输出到日志", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
+            }
+            
+            clearJsButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.clearSavedJavaScriptFiles()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
+            }
+            
+            checkDaodiequButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.checkDaodiequButtonStatus()
+                    Toast.makeText(this@FloatingWindowService, "🔍 正在检查到店取按钮状态...", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
+            }
+            
+            aggressiveClickButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.performAggressiveClickOnDaodiequButton()
+                    Toast.makeText(this@FloatingWindowService, "🚀 正在执行激进点击...", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
+            }
+            
+            httpInjectButton.setOnClickListener {
+                val service = AutoBuyAccessibilityService.instance
+                if (service != null) {
+                    service.manualInjectButtonClickScript()
+                    Toast.makeText(this@FloatingWindowService, "🚀 正在注入HTTP层面按钮点击脚本...", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this@FloatingWindowService, "⚠️ 无障碍服务未启动\n请到设置中启用「VPNSelf」无障碍服务", Toast.LENGTH_LONG).show()
+                }
             }
             
             // 为按钮设置空的触摸监听器，阻止拖动事件传递
@@ -168,6 +274,12 @@ class FloatingWindowService : Service() {
             captureButton.setOnTouchListener(buttonTouchListener)
             startButton.setOnTouchListener(buttonTouchListener)
             stopButton.setOnTouchListener(buttonTouchListener)
+            listJsButton.setOnTouchListener(buttonTouchListener)
+            statsButton.setOnTouchListener(buttonTouchListener)
+            clearJsButton.setOnTouchListener(buttonTouchListener)
+            checkDaodiequButton.setOnTouchListener(buttonTouchListener)
+            aggressiveClickButton.setOnTouchListener(buttonTouchListener)
+            httpInjectButton.setOnTouchListener(buttonTouchListener)
             
             // 最小化按钮
             val minimizeButton = view.findViewById<Button>(R.id.btn_minimize)
@@ -180,6 +292,7 @@ class FloatingWindowService : Service() {
             val closeButton = view.findViewById<Button>(R.id.btn_close)
             closeButton.setOnClickListener {
                 AutoBuyAccessibilityService.instance?.stopAll()
+                AutoBuyAccessibilityService.instance?.clearCapturedCoordinates()
                 stopSelf()
             }
             closeButton.setOnTouchListener(buttonTouchListener)
@@ -196,13 +309,24 @@ class FloatingWindowService : Service() {
             updateButtonStates(service)
             updateApiCount()
         } else {
-            statusText.text = "状态: 服务未启动"
-            apiCountText.text = "API: 0"
+            statusText.text = "状态: ⚠️ 无障碍服务未启动"
+            apiCountText.text = "点击修复服务"
             
             // 禁用所有按钮
             captureButton.isEnabled = false
             startButton.isEnabled = false
             stopButton.isEnabled = false
+            listJsButton.isEnabled = false
+            statsButton.isEnabled = false
+            clearJsButton.isEnabled = false
+            checkDaodiequButton.isEnabled = false
+            aggressiveClickButton.isEnabled = false
+            httpInjectButton.isEnabled = false
+            
+            // 添加点击修复功能
+            apiCountText.setOnClickListener {
+                ServiceHelper.tryFixServices(this@FloatingWindowService)
+            }
         }
     }
     
@@ -218,14 +342,23 @@ class FloatingWindowService : Service() {
         )
         captureButton.isEnabled = true
         
-        // 更新开始按钮
-        startButton.isEnabled = !isRunning && hasLearnedApi
+        // 更新开始按钮 - 移除学习API的前置条件，允许直接开始抢购
+        startButton.isEnabled = !isRunning
         startButton.setBackgroundResource(
             if (isRunning) R.drawable.btn_stop else R.drawable.btn_start
         )
         
         // 更新停止按钮  
         stopButton.isEnabled = isRunning || isCapturing
+        
+        // 更新检查到店取按钮（始终启用）
+        checkDaodiequButton.isEnabled = true
+        
+        // 更新激进点击按钮（始终启用）
+        aggressiveClickButton.isEnabled = true
+        
+        // 更新HTTP注入按钮（始终启用）
+        httpInjectButton.isEnabled = true
         
         // 更新API状态显示
         val apiStatus = if (hasLearnedApi) " ✓" else ""
@@ -237,6 +370,56 @@ class FloatingWindowService : Service() {
         val service = AutoBuyAccessibilityService.instance
         val count = service?.getCapturedApis()?.size ?: 0
         apiCountText.text = "API: $count"
+    }
+    
+    private fun updateButtonCoordinate(intent: Intent) {
+        val buttonText = intent.getStringExtra("button_text") ?: "未知"
+        val centerX = intent.getIntExtra("center_x", 0)
+        val centerY = intent.getIntExtra("center_y", 0)
+        val left = intent.getIntExtra("left", 0)
+        val top = intent.getIntExtra("top", 0)
+        val right = intent.getIntExtra("right", 0)
+        val bottom = intent.getIntExtra("bottom", 0)
+        
+        // 更新坐标显示
+        coordinateInfoText.text = "📍「$buttonText」\n坐标: ($centerX, $centerY)\n区域: ($left, $top, $right, $bottom)"
+        coordinateInfoText.visibility = View.VISIBLE
+        
+        Log.d(TAG, "悬浮窗更新按钮坐标: $buttonText -> ($centerX, $centerY)")
+    }
+    
+    private fun updateAutoClickInfo(intent: Intent) {
+        val buttonText = intent.getStringExtra("button_text") ?: "未知"
+        val centerX = intent.getIntExtra("center_x", 0)
+        val centerY = intent.getIntExtra("center_y", 0)
+        val clickTime = intent.getLongExtra("click_time", System.currentTimeMillis())
+        val clickCount = intent.getIntExtra("click_count", 0)
+        val totalClicks = intent.getIntExtra("total_clicks", 0)
+        
+        // 格式化时间
+        val timeFormat = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        val timeString = timeFormat.format(java.util.Date(clickTime))
+        
+        // 更新显示为自动点击信息
+        coordinateInfoText.text = "🎯 已自动点击\n「$buttonText」\n坐标: ($centerX, $centerY)\n时间: $timeString\n本按钮: ${clickCount}次 | 总计: ${totalClicks}次"
+        coordinateInfoText.visibility = View.VISIBLE
+        
+        // 改变文字颜色以区分自动点击和坐标捕获
+        coordinateInfoText.setTextColor(android.graphics.Color.parseColor("#FF4CAF50")) // 绿色表示自动点击
+        
+        Log.d(TAG, "悬浮窗更新自动点击: $buttonText -> ($centerX, $centerY) at $timeString, 第${clickCount}次")
+        
+        // 5秒后恢复原色（延长显示时间以便查看统计）
+        coordinateInfoText.postDelayed({
+            coordinateInfoText.setTextColor(android.graphics.Color.parseColor("#FFFF9800")) // 恢复原橙色
+        }, 5000)
+    }
+    
+    private fun clearCoordinateInfo() {
+        coordinateInfoText.visibility = View.GONE
+        coordinateInfoText.text = "坐标: 未捕获"
+        coordinateInfoText.setTextColor(android.graphics.Color.parseColor("#FFFF9800")) // 恢复原橙色
+        Log.d(TAG, "已清空坐标信息显示")
     }
     
     private fun minimizeWindow() {

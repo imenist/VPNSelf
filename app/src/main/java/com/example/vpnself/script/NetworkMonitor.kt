@@ -200,6 +200,334 @@ class NetworkMonitor(private val context: Context) {
     )
 
     /**
+     * 🚀 创建HTTP层面的按钮点击注入脚本
+     */
+    fun getButtonClickInjectionScript(): String {
+        addLog(LogLevel.INFO, "🚀 准备注入HTTP层面按钮点击脚本", "专门针对'到店取'按钮的持续点击")
+        
+        return """
+            (function() {
+                console.log('🎯 === HTTP层面按钮点击注入开始 ===');
+                
+                // 全局变量
+                window.AUTODAODIEQU_ACTIVE = true;
+                window.AUTODAODIEQU_CLICK_COUNT = 0;
+                window.AUTODAODIEQU_FOUND_BUTTONS = [];
+                
+                // 🔍 查找"到店取"按钮的多种方法
+                function findDaodiequButtons() {
+                    const buttons = [];
+                    
+                    // 方法1: 通过文本内容查找
+                    const allElements = document.querySelectorAll('*');
+                    allElements.forEach(el => {
+                        const text = el.textContent || el.innerText || '';
+                        if (text.includes('到店取') || text.includes('到店自取')) {
+                            buttons.push({
+                                element: el,
+                                method: '文本匹配',
+                                text: text.trim(),
+                                id: el.id || '无ID',
+                                className: el.className || '无类名',
+                                tagName: el.tagName
+                            });
+                        }
+                    });
+                    
+                    // 方法2: 通过ID查找
+                    const possibleIds = ['daodiequ', 'pickup', 'store-pickup', 'self-pickup'];
+                    possibleIds.forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            buttons.push({
+                                element: el,
+                                method: 'ID匹配',
+                                text: el.textContent || el.innerText || '',
+                                id: el.id,
+                                className: el.className || '无类名',
+                                tagName: el.tagName
+                            });
+                        }
+                    });
+                    
+                    // 方法3: 通过类名查找
+                    const possibleClasses = ['daodiequ', 'pickup', 'btn-pickup', 'store-pickup'];
+                    possibleClasses.forEach(className => {
+                        const elements = document.getElementsByClassName(className);
+                        Array.from(elements).forEach(el => {
+                            buttons.push({
+                                element: el,
+                                method: '类名匹配',
+                                text: el.textContent || el.innerText || '',
+                                id: el.id || '无ID',
+                                className: el.className,
+                                tagName: el.tagName
+                            });
+                        });
+                    });
+                    
+                    // 方法4: 通过属性查找
+                    const elementsWithData = document.querySelectorAll('[data-action*="pickup"], [data-type*="pickup"], [data-text*="到店"]');
+                    elementsWithData.forEach(el => {
+                        buttons.push({
+                            element: el,
+                            method: '属性匹配',
+                            text: el.textContent || el.innerText || '',
+                            id: el.id || '无ID',
+                            className: el.className || '无类名',
+                            tagName: el.tagName
+                        });
+                    });
+                    
+                    // 去重
+                    const uniqueButtons = [];
+                    const seen = new Set();
+                    buttons.forEach(btn => {
+                        const key = btn.element.outerHTML;
+                        if (!seen.has(key)) {
+                            seen.add(key);
+                            uniqueButtons.push(btn);
+                        }
+                    });
+                    
+                    return uniqueButtons;
+                }
+                
+                // 🖱️ 执行点击的多种方法
+                function performClick(button) {
+                    const el = button.element;
+                    let success = false;
+                    
+                    console.log('🖱️ 尝试点击按钮:', button.method, button.text);
+                    
+                    // 点击方法1: 直接click()
+                    try {
+                        el.click();
+                        console.log('✅ 方法1成功: 直接click()');
+                        success = true;
+                    } catch (e) {
+                        console.log('❌ 方法1失败:', e.message);
+                    }
+                    
+                    // 点击方法2: 模拟鼠标事件
+                    try {
+                        const mouseEvent = new MouseEvent('click', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window
+                        });
+                        el.dispatchEvent(mouseEvent);
+                        console.log('✅ 方法2成功: 鼠标事件');
+                        success = true;
+                    } catch (e) {
+                        console.log('❌ 方法2失败:', e.message);
+                    }
+                    
+                    // 点击方法3: 模拟触摸事件
+                    try {
+                        const rect = el.getBoundingClientRect();
+                        const centerX = rect.left + rect.width / 2;
+                        const centerY = rect.top + rect.height / 2;
+                        
+                        const touchEvent = new TouchEvent('touchstart', {
+                            bubbles: true,
+                            cancelable: true,
+                            touches: [{
+                                clientX: centerX,
+                                clientY: centerY,
+                                pageX: centerX,
+                                pageY: centerY
+                            }]
+                        });
+                        el.dispatchEvent(touchEvent);
+                        
+                        const touchEndEvent = new TouchEvent('touchend', {
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        el.dispatchEvent(touchEndEvent);
+                        
+                        console.log('✅ 方法3成功: 触摸事件');
+                        success = true;
+                    } catch (e) {
+                        console.log('❌ 方法3失败:', e.message);
+                    }
+                    
+                    // 点击方法4: 模拟键盘事件（如果元素可聚焦）
+                    try {
+                        if (el.focus) {
+                            el.focus();
+                            const keyEvent = new KeyboardEvent('keydown', {
+                                bubbles: true,
+                                cancelable: true,
+                                key: 'Enter',
+                                code: 'Enter'
+                            });
+                            el.dispatchEvent(keyEvent);
+                            console.log('✅ 方法4成功: 键盘事件');
+                            success = true;
+                        }
+                    } catch (e) {
+                        console.log('❌ 方法4失败:', e.message);
+                    }
+                    
+                    // 点击方法5: 查找并点击子元素
+                    try {
+                        const clickableChildren = el.querySelectorAll('button, a, [onclick], [role="button"]');
+                        clickableChildren.forEach(child => {
+                            child.click();
+                            console.log('✅ 方法5成功: 子元素点击');
+                            success = true;
+                        });
+                    } catch (e) {
+                        console.log('❌ 方法5失败:', e.message);
+                    }
+                    
+                    return success;
+                }
+                
+                // 🔄 持续点击逻辑
+                function startAutoClick() {
+                    console.log('🔄 开始持续点击逻辑');
+                    
+                    const clickInterval = setInterval(() => {
+                        if (!window.AUTODAODIEQU_ACTIVE) {
+                            console.log('⏹️ 自动点击已停止');
+                            clearInterval(clickInterval);
+                            return;
+                        }
+                        
+                        // 重新查找按钮（因为页面可能动态更新）
+                        const buttons = findDaodiequButtons();
+                        
+                        if (buttons.length === 0) {
+                            console.log('⏳ 未找到到店取按钮，继续搜索...');
+                            return;
+                        }
+                        
+                        console.log('🎯 找到 ' + buttons.length + ' 个到店取按钮');
+                        
+                        // 尝试点击每个找到的按钮
+                        buttons.forEach((button, index) => {
+                            setTimeout(() => {
+                                performClick(button);
+                                window.AUTODAODIEQU_CLICK_COUNT++;
+                                
+                                // 通知Android端
+                                if (window.NetworkMonitor) {
+                                    try {
+                                        NetworkMonitor.onButtonClick(
+                                            '到店取-HTTP注入', 
+                                            '点击次数:' + window.AUTODAODIEQU_CLICK_COUNT + ',方法:' + button.method
+                                        );
+                                    } catch (e) {
+                                        console.log('通知Android失败:', e.message);
+                                    }
+                                }
+                                
+                                console.log('🎯 点击完成 #' + window.AUTODAODIEQU_CLICK_COUNT + ' - ' + button.method);
+                            }, index * 100); // 每个按钮延迟100ms点击
+                        });
+                        
+                    }, 500); // 每500ms检查一次
+                }
+                
+                // 🎯 分析页面DOM结构
+                function analyzePage() {
+                    console.log('🔍 === 开始分析页面DOM结构 ===');
+                    
+                    const buttons = findDaodiequButtons();
+                    
+                    console.log('📊 页面分析结果:');
+                    console.log('- 找到按钮数量:', buttons.length);
+                    console.log('- 页面URL:', window.location.href);
+                    console.log('- 页面标题:', document.title);
+                    console.log('- 总元素数量:', document.querySelectorAll('*').length);
+                    
+                    buttons.forEach((button, index) => {
+                        console.log('🔍 按钮 #' + (index + 1) + ':');
+                        console.log('  - 查找方法:', button.method);
+                        console.log('  - 文本内容:', button.text);
+                        console.log('  - 元素ID:', button.id);
+                        console.log('  - 类名:', button.className);
+                        console.log('  - 标签名:', button.tagName);
+                        console.log('  - HTML:', button.element.outerHTML.substring(0, 200) + '...');
+                    });
+                    
+                    window.AUTODAODIEQU_FOUND_BUTTONS = buttons;
+                    
+                    // 通知Android端分析结果
+                    if (window.NetworkMonitor) {
+                        try {
+                            NetworkMonitor.onButtonClick(
+                                'DOM分析完成', 
+                                '找到' + buttons.length + '个到店取按钮,URL:' + window.location.href
+                            );
+                        } catch (e) {
+                            console.log('通知Android失败:', e.message);
+                        }
+                    }
+                }
+                
+                // 🚀 启动流程
+                console.log('🚀 启动HTTP层面按钮点击流程');
+                
+                // 1. 等待页面加载完成
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', () => {
+                        setTimeout(() => {
+                            analyzePage();
+                            startAutoClick();
+                        }, 1000);
+                    });
+                } else {
+                    setTimeout(() => {
+                        analyzePage();
+                        startAutoClick();
+                    }, 1000);
+                }
+                
+                // 2. 监听页面变化
+                const observer = new MutationObserver(() => {
+                    console.log('📝 页面DOM发生变化，重新分析...');
+                    setTimeout(analyzePage, 500);
+                });
+                
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true
+                });
+                
+                // 3. 提供全局控制方法
+                window.stopAutoDaodiequ = function() {
+                    window.AUTODAODIEQU_ACTIVE = false;
+                    console.log('⏹️ 停止自动点击到店取');
+                };
+                
+                window.startAutoDaodiequ = function() {
+                    window.AUTODAODIEQU_ACTIVE = true;
+                    startAutoClick();
+                    console.log('▶️ 开始自动点击到店取');
+                };
+                
+                window.getAutoDaodiequStatus = function() {
+                    return {
+                        active: window.AUTODAODIEQU_ACTIVE,
+                        clickCount: window.AUTODAODIEQU_CLICK_COUNT,
+                        foundButtons: window.AUTODAODIEQU_FOUND_BUTTONS.length
+                    };
+                };
+                
+                console.log('🎉 HTTP层面按钮点击注入完成！');
+                console.log('💡 使用 window.stopAutoDaodiequ() 停止自动点击');
+                console.log('💡 使用 window.getAutoDaodiequStatus() 查看状态');
+                
+            })();
+        """.trimIndent()
+    }
+    
+    /**
      * 创建用于注入的JavaScript代码
      */
     fun getInjectionScript(): String {
@@ -418,6 +746,36 @@ class NetworkMonitor(private val context: Context) {
         @JavascriptInterface
         fun onButtonClick(buttonText: String, className: String) {
             addLog(LogLevel.DEBUG, "按钮点击事件", "文本: '$buttonText', 类名: '$className'")
+            
+            // 处理HTTP注入的特殊按钮点击
+            when {
+                buttonText.contains("到店取-HTTP注入") -> {
+                    addLog(LogLevel.SUCCESS, "🎯 HTTP注入点击成功", className)
+                    
+                    // 提取点击次数和方法
+                    val clickInfo = className.split(",")
+                    val clickCount = clickInfo.find { it.contains("点击次数:") }?.substringAfter("点击次数:") ?: "未知"
+                    val method = clickInfo.find { it.contains("方法:") }?.substringAfter("方法:") ?: "未知"
+                    
+                    Log.i("HTTPInject", "🎯 HTTP注入点击成功！点击次数: $clickCount, 方法: $method")
+                }
+                
+                buttonText.contains("DOM分析完成") -> {
+                    addLog(LogLevel.INFO, "🔍 DOM分析完成", className)
+                    
+                    // 提取按钮数量和URL
+                    val parts = className.split(",")
+                    val buttonCount = parts.find { it.contains("找到") && it.contains("个到店取按钮") }?.substringBefore("个到店取按钮")?.substringAfter("找到") ?: "0"
+                    val url = parts.find { it.contains("URL:") }?.substringAfter("URL:") ?: "未知"
+                    
+                    Log.i("HTTPInject", "🔍 DOM分析完成！找到 $buttonCount 个到店取按钮，页面URL: $url")
+                }
+                
+                else -> {
+                    // 普通按钮点击
+                    Log.d("ButtonClick", "普通按钮点击: $buttonText, 类名: $className")
+                }
+            }
         }
     }
     

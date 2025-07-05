@@ -68,7 +68,18 @@
             android:text="API: 0"
             android:textColor="#FFFFFF"
             android:textSize="12sp"
-            android:paddingBottom="8dp" />
+            android:paddingBottom="4dp" />
+
+        <!-- 按钮坐标信息 -->
+        <TextView
+            android:id="@+id/tv_coordinate_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="坐标: 未捕获"
+            android:textColor="#FFFF9800"
+            android:textSize="10sp"
+            android:paddingBottom="8dp"
+            android:visibility="gone" />
 
         <!-- 控制按钮 -->
         <LinearLayout
@@ -116,6 +127,102 @@
                     android:text="@string/script_stop"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <!-- 第三行：JS文件管理按钮 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="4dp">
+
+                <Button
+                    android:id="@+id/btn_list_js"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="1dp"
+                    android:background="@drawable/btn_capture"
+                    android:text="查看JS"
+                    android:textColor="#FFFFFF"
+                    android:textSize="9sp" />
+
+                <Button
+                    android:id="@+id/btn_stats"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="1dp"
+                    android:layout_marginEnd="1dp"
+                    android:background="@drawable/btn_start"
+                    android:text="统计"
+                    android:textColor="#FFFFFF"
+                    android:textSize="9sp" />
+
+                <Button
+                    android:id="@+id/btn_clear_js"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="1dp"
+                    android:background="@drawable/btn_stop"
+                    android:text="清空JS"
+                    android:textColor="#FFFFFF"
+                    android:textSize="9sp" />
+
+            </LinearLayout>
+
+            <!-- 第四行：到店取按钮检查 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="4dp">
+
+                <Button
+                    android:id="@+id/btn_check_daodiequ"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/btn_capture"
+                    android:text="检查到店取"
+                    android:textColor="#FFFFFF"
+                    android:textSize="9sp" />
+
+                <Button
+                    android:id="@+id/btn_aggressive_click"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/btn_start"
+                    android:text="激进点击"
+                    android:textColor="#FFFFFF"
+                    android:textSize="9sp" />
+
+            </LinearLayout>
+
+            <!-- 第五行：HTTP注入按钮 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="4dp">
+
+                <Button
+                    android:id="@+id/btn_http_inject"
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:background="@drawable/btn_capture"
+                    android:text="🚀 HTTP注入点击"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
 
             </LinearLayout>
 
