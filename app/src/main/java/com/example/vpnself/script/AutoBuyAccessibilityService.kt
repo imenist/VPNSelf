@@ -1201,7 +1201,8 @@ private fun collectTextsFromNode(node: AccessibilityNodeInfo, texts: MutableList
     private fun performJavaScriptClick(x: Float, y: Float, buttonText: String): Boolean {
         return try {
             logInfo("🌐 执行JS注入点击: ($x, $y) 按钮: $buttonText")
-            
+
+
             // 构造JavaScript点击代码
             val jsCode = """
                 (function() {
