@@ -1,0 +1,173 @@
+[
+  {
+    "name": "delivery",
+    "type": "radio",
+    "label": "配送选项",
+    "options": {
+      "送到家": "送到家",
+      "到店取": "到店取",
+      "来回刷": "来回刷"
+    },
+    "validation": "required"
+  },
+  {
+    "name": "specs_conf",
+    "type": "radio",
+    "label": "购买规格",
+    "options": {
+      "单个": "单个",
+      "整端(整盒x个)": "整端(整盒x个)"
+    },
+    "validation": "required"
+  },
+  {
+    "name": "purchase_count_conf",
+    "type": "textarea",
+    "label": "购买数量",
+    "help": "(默认为1, 请根据需求设置, 兼容超出最大购买数量, 如果选择了购买整端（盒），这里代表的就是端（盒）数)"
+  },
+  {
+    "name": "type_conf",
+    "type": "radio",
+    "label": "购买款式（开发中）",
+    "help": "星星人随心配系列中可以选择的款式",
+    "options": {
+      "A组": "A组",
+      "B组": "B组"
+    },
+    "validation": "required"
+  },
+  {
+    "name": "extra_delay_conf",
+    "type": "textarea",
+    "label": "主动操作延时 (毫秒)",
+    "help": "提交订单过程和检测是否刷出库存时的操作延时 (毫秒, 1000 = 1秒)"
+  },
+  {
+    "name": "rage_stock_refresh_conf",
+    "type": "checkbox",
+    "label": "暴力库存刷新模式（仅限高级用户使用）",
+    "help": "开启暴力库存刷新模式后，脚本将会同时刷新多次从而实现理论更高效的刷新效率。如果出现「操作频繁」或者「太火爆了」，请及时修改库存刷新间隔以防黑号。"
+  },
+  {
+    "name": "delay_conf",
+    "type": "textarea",
+    "label": "库存刷新间隔时间 (毫秒)",
+    "help": "(毫秒, 1000 = 1秒) 请确保为纯数字 推荐大于150ms。试用期间该配置项无效，强制锁定为2000ms。如果觉得整体流程满意，请取消试用后重新购买。"
+  },
+  {
+    "name": "sku_result_toast_conf",
+    "type": "checkbox",
+    "label": "显示库存不足提示",
+    "help": "在库存刷新结果出来后，脚本自动点击数量的+号，以实现提示库存不足的功能。（除非有需求否则不建议开启）"
+  },
+  {
+    "name": "enable_random_delay_conf",
+    "type": "checkbox",
+    "label": "启用额外随机库存刷新间隔",
+    "help": "启用后会增加额外的库存刷新间隔。"
+  },
+  {
+    "name": "random_delay_lower_conf",
+    "type": "textarea",
+    "label": "库存刷新额外最小随机间隔时间 (毫秒)",
+    "help": "设置库存额外的刷新间隔的最小时间（单位：毫秒），需小于最大间隔时间。"
+  },
+  {
+    "name": "random_delay_upper_conf",
+    "type": "textarea",
+    "label": "库存刷新额外最大随机间隔时间 (毫秒)",
+    "help": "设置库存额外的刷新间隔的最大时间（单位：毫秒），需大于最小间隔时间。"
+  },
+  {
+    "name": "max_refresh_time_conf",
+    "type": "textarea",
+    "label": "进入库存刷新模式后自动停止脚本的时间 (分钟)",
+    "help": "单位为分钟，支持小数点（如0.5=30秒）。不填写或填0则为不会自动停止库存刷新。"
+  },
+  {
+    "name": "ack_delay_conf",
+    "type": "textarea",
+    "label": "点击[我知道了]按钮后额外等待的时间 (毫秒)",
+    "help": "单位为毫秒（1000ms = 1秒）"
+  },
+  {
+    "name": "ignore_ack_conf",
+    "type": "checkbox",
+    "label": "不自动点击[我知道了]按钮 （仅限高级用户使用）",
+    "help": "脚本将不会点击[我知道了]按钮，而是继续提交支付。该功能仅限高级用户且了解风险后使用。"
+  },
+  {
+    "name": "ignore_ack_click_delay_conf",
+    "type": "textarea",
+    "label": "确认信息并支付点击后等待时间",
+    "help": "脚本在开启了不会点击[我知道了]按钮模式时，在刷回流过程中每个操作的延迟。单位为毫秒（1000ms = 1秒）"
+  },
+  {
+    "name": "special_confirm_delay_conf",
+    "type": "textarea",
+    "label": "特殊刷回流模式延迟点击[确定]按钮延时（仅限高级用户修改和使用）",
+    "help": "脚本在开启了不会点击[我知道了]按钮模式时，在被打回上一页后，延迟点击确定按钮的延时。"
+  },
+  {
+    "name": "auto_click_notification_conf",
+    "type": "checkbox",
+    "label": "自动点击到货通知按钮",
+    "help": "自动点击没点过的到货通知"
+  },
+  {
+    "name": "main_window_alpha_conf",
+    "type": "textarea",
+    "label": "悬浮窗不透明度",
+    "help": "1.0为完全不透明, 0.0为完全透明，默认为0.9，按需调整。"
+  },
+  {
+    "name": "vibrate_time_conf",
+    "type": "range",
+    "label": "进入支付页面后振动的时长 (毫秒)",
+    "min": 1000,
+    "max": 30000,
+    "show-value": true,
+    "value": 3000
+  },
+  {
+    "name": "password_or_vibrate_conf",
+    "type": "radio",
+    "label": "购买规格",
+    "options": {
+      "震动(不设置密码)": "震动(不设置密码)",
+      "自动输入密码": "自动输入密码"
+    },
+    "validation": "required"
+  },
+  {
+    "name": "password_setting_conf",
+    "type": "textarea",
+    "label": "密码设定",
+    "help": "todo"
+  },
+  {
+    "name": "timeout_sleep_time_conf",
+    "type": "textarea",
+    "label": "脚本最长运行时间设定",
+    "help": "todo"
+  },
+  {
+    "name": "timeout_sleep_wait_time_conf",
+    "type": "textarea",
+    "label": "脚本暂停时间",
+    "help": "todo"
+  },
+  {
+    "name": "hide_console_conf",
+    "type": "checkbox",
+    "label": "隐藏控制台",
+    "help": "脚本在启动的时候不会显示控制台。默认不勾选。"
+  },
+  {
+    "name": "debug_mode_conf",
+    "type": "checkbox",
+    "label": "调试模式 (仅在开发者指导下开启使用)",
+    "help": "调试模式，用于开发者除错。"
+  }
+]

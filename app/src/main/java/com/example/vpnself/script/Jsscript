@@ -1,4 +1,4 @@
-// 文档地址：https://docs.hamibot.com/ 
+// 文档地址：https://docs.hamibot.com/
 auto.waitFor()
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
@@ -26,7 +26,11 @@ const {
     sku_result_toast_conf,
     rage_stock_refresh_conf,
     vibrate_time_conf,
-    special_confirm_delay_conf
+    password_or_vibrate_conf,
+    password_setting_conf,
+    timeout_sleep_time_conf,
+    timeout_sleep_wait_time_conf,
+    special_confirm_delay_conf,
 } = hamibot.env;
 const { onFreeTrial } = hamibot.plan;
 
@@ -51,12 +55,26 @@ var ignore_ack_click_delay = parseInt(ignore_ack_click_delay_conf) || 200;
 var last_double_confirm_time = 0;
 var last_confirm_time = 0;
 var vibrate_time = parseInt(vibrate_time_conf) || 3000;
+var password_or_vibrate = password_or_vibrate_conf || "震动(不设置密码)";
+var password_setting = parseInt(password_setting_conf) || 123456;
+var timeout_sleep_time = parseInt(timeout_sleep_time_conf) || 3 * 60 * 10000;
+var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 15000;
 var special_confirm_delay = parseInt(special_confirm_delay_conf) || 1750;
+
+// 刷新相关配置
+var refresh_on_prepare_sale = true; // 是否在准备发售状态下自动刷新
+var max_refresh_attempts = 50; // 最大刷新尝试次数
+var refresh_attempt_count = 0; // 当前刷新尝试次数
+var start_time = 0;
 
 console.info('[欢迎使用] Dr. PopMart 抢购脚本');
 console.warn('目前的购买方案为: ', purchase_type);
 console.warn('目前的抢购数量为: ', purchase_count);
 console.warn('目前的抢购规格为: ', specs);
+console.info('🚀[新功能] 已添加"距离开售时间还剩00:00"状态检测');
+console.info('🚀[新功能] 自动下拉刷新功能已启用(仅在小程序内部)');
+console.info('🚀[新功能] 刷新后立即检测"立即购买"按钮');
+console.info('🚀[新功能] 最大刷新次数限制: ' + max_refresh_attempts + '次');
 if (onFreeTrial) {
     console.error('目前为免费试用版, 功能受到限制，如果觉得好用请重新订阅后再次购买!');
     console.error('在试用期间, 刷新速度的配置选项将无效, 固定为2000ms(2秒)');
@@ -92,6 +110,7 @@ w.main_window.attr('alpha', main_window_alpha);
 
 function start() {
     script_status = 1;
+    start_time = new Date().getTime();
     w.end.attr('visibility', 'visible');
     w.start.attr('visibility', 'gone');
 }
@@ -449,13 +468,15 @@ function get_current_webview_fast(current_node) {
 
 
 function check_current_page_tree(header_text, current_webview) {
-
+    console.info("check_current_page_tree");
     if (!current_webview) {
         return { header: header_text, status: "no_webview" };
     }
     if (header_text === "确认订单") {
+        console.info("确认订单");
         return { header: header_text, status: "confirm_and_pay" };
     } else if (header_text === "访问异常，请稍后重试") {
+        console.info("访问异常，请稍后重试");
         return { header: header_text, status: "error" };
     } else if (header_text == "") {
         var startTime = Date.now();
@@ -469,16 +490,210 @@ function check_current_page_tree(header_text, current_webview) {
             return { header: header_text, status: "default" };
         }
 
+        // 检查是否有"立即购买"按钮
         var buyNowElement = current_webview.findOne(text("立即购买").algorithm('DFS'));
-
         if (buyNowElement) {
             return { header: header_text, status: "info_page" };
         }
 
+        // 检查是否有"距离开售时间还剩00:00"文字
+        var prepareSaleElement = current_webview.findOne(textMatches("距离开售时间还剩\\d{2}:\\d{2}").algorithm('DFS'));
+        if (prepareSaleElement) {
+            return { header: header_text, status: "prepare_sale" };
+        }
+
         return { header: header_text, status: "default" };
+    } else if (header_text === "密码测试") {
+        console.info("密码测试");
+        // 特殊的测试模式标识
+        return { header: header_text, status: "password_test" };
     } else {
+        console.info("测试密码输入");
+        // 检查是否有数字键盘（用于测试密码输入功能）
+        // 扩大检测范围，不仅仅在webview内查找
+        var passwordTestElement = null;
+        
+        // 方法1: 在当前webview中查找数字
+        if (current_webview) {
+            passwordTestElement = current_webview.findOne(text("1").algorithm('DFS'));
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("2").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("3").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("4").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("5").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("6").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("7").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("8").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("9").algorithm('DFS'));
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = current_webview.findOne(text("0").algorithm('DFS'));
+            }
+        }
+        
+        // 方法2: 在全局范围内查找数字（如果webview内没找到）
+        if (!passwordTestElement) {
+            passwordTestElement = text("1").findOne(100);
+            if (!passwordTestElement) {
+                passwordTestElement = text("2").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("3").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("4").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("5").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("6").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("7").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("8").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("9").findOne(100);
+            }
+            if (!passwordTestElement) {
+                passwordTestElement = text("0").findOne(100);
+            }
+        }
+        
+        if (passwordTestElement) {
+            console.info("[测试] 检测到数字键盘，进入密码测试模式");
+            return { header: header_text, status: "password_test" };
+        }
+
         return { header: header_text, status: "default" };
     }
+}
+
+// 添加下拉刷新功能
+function performPullRefresh(webview) {
+    if (!webview) {
+        console.warn("[错误] WebView为空，无法执行下拉刷新");
+        return false;
+    }
+    
+    try {
+        console.info("[操作] 开始执行下拉刷新");
+        
+        // 获取WebView的边界
+        var bounds = webview.bounds();
+        var centerX = bounds.centerX();
+        
+        // 确保在WebView内部进行下拉刷新
+        // 从WebView内部上方30%的位置开始，向下拖拽到60%的位置
+        var webviewHeight = bounds.height();
+        var startY = bounds.top + (webviewHeight * 0.2); // 从WebView顶部30%的位置开始
+        var endY = bounds.top + (webviewHeight * 0.8); // 拖拽到WebView 60%的位置
+        
+        console.info("[操作] 下拉刷新坐标 - 起始: (" + centerX + ", " + startY + "), 结束: (" + centerX + ", " + endY + ")");
+        
+        // 执行下拉手势
+        swipe(centerX, startY, centerX, endY, 600);
+        
+        console.info("[操作] 下拉刷新手势已执行");
+        sleep(3000); // 等待刷新完成
+        
+        return true;
+    } catch (e) {
+        console.error("[错误] 下拉刷新失败: " + e.message);
+        return false;
+    }
+}
+
+// 添加替代的滚动刷新方法
+function performScrollRefresh(webview) {
+    if (!webview) {
+        console.warn("[错误] WebView为空，无法执行滚动刷新");
+        return false;
+    }
+    
+    try {
+        console.info("[操作] 开始执行滚动刷新");
+        
+        // 获取WebView的边界
+        var bounds = webview.bounds();
+        var centerX = bounds.centerX();
+        var webviewHeight = bounds.height();
+        
+        // 确保在WebView内部进行滚动操作
+        var topPos = bounds.top + (webviewHeight * 0.4); // WebView 40%位置
+        var centerPos = bounds.top + (webviewHeight * 0.5); // WebView 50%位置
+        var bottomPos = bounds.top + (webviewHeight * 0.6); // WebView 60%位置
+        
+        console.info("[操作] 滚动刷新坐标 - 中心: (" + centerX + ", " + centerPos + ")");
+        
+        // 执行轻微的上下滚动动作来触发刷新
+        swipe(centerX, centerPos, centerX, topPos, 300);
+        sleep(150);
+        swipe(centerX, topPos, centerX, bottomPos, 400);
+        sleep(300);
+        swipe(centerX, bottomPos, centerX, centerPos, 300);
+        
+        console.info("[操作] 滚动刷新已执行");
+        sleep(600);
+        
+        return true;
+    } catch (e) {
+        console.error("[错误] 滚动刷新失败: " + e.message);
+        return false;
+    }
+}
+
+// 添加多种刷新方法的组合
+function performRefreshActions(webview) {
+    console.info("[操作] 开始执行刷新操作");
+
+    var refreshSuccess = false;
+
+    // 方法1: 下拉刷新
+    if (!refreshSuccess) {
+        refreshSuccess = performPullRefresh(webview);
+    }
+
+    // 方法2: 如果下拉刷新失败，尝试滚动刷新
+    if (!refreshSuccess) {
+        refreshSuccess = performScrollRefresh(webview);
+    }
+
+    // 方法3: 如果都失败，尝试点击页面中心进行刷新
+    if (!refreshSuccess) {
+        try {
+            console.info("[操作] 尝试点击页面中心进行刷新");
+            var bounds = webview.bounds();
+            var centerX = bounds.centerX();
+            var centerY = bounds.top + (bounds.height() * 0.5); // WebView中心位置
+            
+            console.info("[操作] 点击刷新坐标: (" + centerX + ", " + centerY + ")");
+            click(centerX, centerY);
+            sleep(500);
+            refreshSuccess = true;
+        } catch (e) {
+            console.error("[错误] 点击刷新失败: " + e.message);
+        }
+    }
+
+    return refreshSuccess;
 }
 
 function click_plus_btn(current_webview) {
@@ -541,6 +756,261 @@ function satisfyPurchaseCount(current_webview, target) {
     }
 }
 
+// 等待密码键盘出现并输入密码的函数
+function waitAndInputPassword(password) {
+    console.info("[密码输入] 开始等待微信支付密码键盘出现...");
+    
+    var maxWaitTime = 15000; // 最大等待15秒
+    var startTime = Date.now();
+    var coordinates = null;
+    
+    // 循环等待直到找到足够的数字按钮
+    while (Date.now() - startTime < maxWaitTime) {
+        coordinates = getPasswordKeyboardCoordinates();
+        
+        if (coordinates && Object.keys(coordinates).length >= 9) {
+            console.info("[密码输入] 已找到足够的数字按钮，开始输入密码...");
+            break;
+        }
+        
+        console.info("[密码输入] 等待密码键盘出现... 已等待 " + Math.round((Date.now() - startTime) / 1000) + " 秒");
+        sleep(1000); // 等待1秒后重试
+    }
+    
+    if (!coordinates || Object.keys(coordinates).length < 9) {
+        console.error("[密码输入] 等待超时或未找到足够的数字按钮");
+        return false;
+    }
+    
+    // 输入用户设置的密码
+    console.info("[密码输入] 开始输入密码: " + password);
+    
+    for (var i = 0; i < password.length; i++) {
+        var digit = password.charAt(i);
+        var coord = coordinates[digit];
+        
+        if (coord) {
+            console.info("[密码输入] 点击数字 " + digit + " 坐标: (" + coord.x + ", " + coord.y + ")");
+            click(coord.x, coord.y);
+            sleep(300); // 每次点击间隔300ms
+        } else {
+            console.error("[密码输入] 未找到数字 " + digit + " 的坐标");
+            return false;
+        }
+    }
+    
+    console.info("[密码输入] 密码输入完成！");
+    
+    // 可选：自动点击确认按钮
+    sleep(500);
+    var confirmButton = text("确认").findOne(1000);
+    if (!confirmButton) {
+        confirmButton = text("完成").findOne(1000);
+    }
+    if (!confirmButton) {
+        confirmButton = desc("确认").findOne(1000);
+    }
+    if (!confirmButton) {
+        confirmButton = desc("完成").findOne(1000);
+    }
+    
+    if (confirmButton) {
+        console.info("[密码输入] 找到确认按钮，自动点击确认");
+        confirmButton.click();
+    } else {
+        console.info("[密码输入] 未找到确认按钮，需要手动确认");
+    }
+    
+    return true;
+}
+
+// 获取微信支付密码键盘坐标的函数
+function getPasswordKeyboardCoordinates() {
+    try {
+        console.info("[测试] 开始搜索数字键盘坐标...");
+        
+        // 查找数字1到9的坐标
+        var numberCoordinates = {};
+        var foundNumbers = [];
+        
+        // 遍历数字1到9
+        for (var i = 1; i <= 9; i++) {
+            var numberText = i.toString();
+            
+            // 尝试多种方法查找数字按钮
+            var numberButton = null;
+            
+            // 方法1: 直接查找文本
+            numberButton = text(numberText).findOne(200);
+            if (!numberButton) {
+                // 方法2: 查找描述
+                numberButton = desc(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法3: 查找包含数字的TextView
+                numberButton = className("android.widget.TextView").text(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法4: 查找包含数字的Button
+                numberButton = className("android.widget.Button").text(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法5: 查找包含数字的ImageView（某些键盘可能用图片）
+                numberButton = className("android.widget.ImageView").desc(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法6: 查找包含数字的LinearLayout
+                numberButton = className("android.widget.LinearLayout").desc(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法7: 使用正则表达式查找
+                numberButton = textMatches(".*" + numberText + ".*").findOne(200);
+            }
+            if (!numberButton) {
+                // 方法8: 查找clickable元素
+                numberButton = clickable(true).text(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法9: 查找RelativeLayout
+                numberButton = className("android.widget.RelativeLayout").desc(numberText).findOne(200);
+            }
+            if (!numberButton) {
+                // 方法10: 查找FrameLayout
+                numberButton = className("android.widget.FrameLayout").desc(numberText).findOne(200);
+            }
+            
+            if (numberButton) {
+                var bounds = numberButton.bounds();
+                var centerX = bounds.centerX();
+                var centerY = bounds.centerY();
+                
+                numberCoordinates[numberText] = {
+                    x: centerX,
+                    y: centerY,
+                    left: bounds.left,
+                    top: bounds.top,
+                    right: bounds.right,
+                    bottom: bounds.bottom
+                };
+                
+                foundNumbers.push(numberText);
+                console.info("[搜索成功] 找到数字 " + numberText + " 坐标: (" + centerX + ", " + centerY + ")");
+            } else {
+                // 如果特定数字找不到，记录详细信息
+                console.warn("[搜索失败] 未找到数字 " + numberText + " 的按钮");
+            }
+        }
+        
+        // 也尝试查找数字0
+        var zeroButton = null;
+        zeroButton = text("0").findOne(200);
+        if (!zeroButton) {
+            zeroButton = desc("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = className("android.widget.TextView").text("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = className("android.widget.Button").text("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = className("android.widget.ImageView").desc("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = className("android.widget.LinearLayout").desc("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = textMatches(".*0.*").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = clickable(true).text("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = className("android.widget.RelativeLayout").desc("0").findOne(200);
+        }
+        if (!zeroButton) {
+            zeroButton = className("android.widget.FrameLayout").desc("0").findOne(200);
+        }
+        
+        if (zeroButton) {
+            var bounds = zeroButton.bounds();
+            var centerX = bounds.centerX();
+            var centerY = bounds.centerY();
+            
+            numberCoordinates["0"] = {
+                x: centerX,
+                y: centerY,
+                left: bounds.left,
+                top: bounds.top,
+                right: bounds.right,
+                bottom: bounds.bottom
+            };
+            
+            foundNumbers.push("0");
+            console.info("[搜索成功] 找到数字 0 坐标: (" + centerX + ", " + centerY + ")");
+        } else {
+            console.warn("[搜索失败] 未找到数字 0 的按钮");
+        }
+        
+        // 只有当找到足够的数字时才输出详细信息
+        if (foundNumbers.length >= 9) {
+            console.info("[密码坐标] 成功找到 " + foundNumbers.length + " 个数字按钮: " + foundNumbers.join(", "));
+            
+            // 输出所有坐标信息
+            for (var i = 1; i <= 9; i++) {
+                var digit = i.toString();
+                if (numberCoordinates[digit]) {
+                    var coord = numberCoordinates[digit];
+                    console.info("[密码坐标] 数字 " + digit + " 坐标: (" + coord.x + ", " + coord.y + ")");
+                }
+            }
+            if (numberCoordinates["0"]) {
+                var coord = numberCoordinates["0"];
+                console.info("[密码坐标] 数字 0 坐标: (" + coord.x + ", " + coord.y + ")");
+            }
+            
+            // 查找删除按钮和确认按钮
+            var deleteButton = text("删除").findOne(200);
+            if (!deleteButton) {
+                deleteButton = desc("删除").findOne(200);
+            }
+            if (!deleteButton) {
+                deleteButton = text("←").findOne(200);
+            }
+            if (!deleteButton) {
+                deleteButton = desc("←").findOne(200);
+            }
+            
+            if (deleteButton) {
+                var bounds = deleteButton.bounds();
+                console.info("[密码坐标] 删除按钮坐标: (" + bounds.centerX() + ", " + bounds.centerY() + ")");
+            }
+            
+            var confirmButton = text("确认").findOne(200);
+            if (!confirmButton) {
+                confirmButton = text("完成").findOne(200);
+            }
+            if (!confirmButton) {
+                confirmButton = desc("确认").findOne(200);
+            }
+            if (!confirmButton) {
+                confirmButton = desc("完成").findOne(200);
+            }
+            
+            if (confirmButton) {
+                var bounds = confirmButton.bounds();
+                console.info("[密码坐标] 确认按钮坐标: (" + bounds.centerX() + ", " + bounds.centerY() + ")");
+            }
+        }
+        
+        return numberCoordinates;
+        
+    } catch (e) {
+        console.error("[密码输入] 获取密码键盘坐标时发生错误: " + e.message);
+        return null;
+    }
+}
+
 // STATE VARIABLES - These need to be reset when script_status = 0
 var rebuy_flag = false;
 var submit_flag = false;
@@ -561,6 +1031,7 @@ while (true) {
         last_double_confirm_time = 0;
         last_confirm_time = 0;
         confirm_btn_retry_count = 0;
+        refresh_attempt_count = 0; // 重置刷新尝试次数
         sleep(100);
         continue;
     }
@@ -577,6 +1048,15 @@ while (true) {
             console.error("[页面检测] 当前处于支付页面");
             console.warn("[通知] 抢购完成! 祝老板大赚!");
             device.vibrate(vibrate_time);
+            
+            // 判断是否需要输入密码
+            if (password_or_vibrate === "震动(不设置密码)") {
+                console.info("[密码设置] 选择了震动模式，不自动输入密码");
+            } else {
+                console.info("[密码设置] 选择了自动输入密码模式，密码: " + password_setting);
+                console.info("[密码输入] 开始等待微信支付密码键盘...");
+                waitAndInputPassword(password_setting.toString());
+            }
         }
         continue;
     }
@@ -760,8 +1240,111 @@ while (true) {
                 sleep(100);
                 var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
                 if (!confirm_btn) {
-                    text("立即购买").click();
-                    sleep(500);
+                    // 检查是否有"立即购买"按钮
+                    var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+                    if (buyNowBtn) {
+                        buyNowBtn.click();
+                        console.info("[操作] 点击立即购买按钮");
+                        sleep(500);
+                    } else {
+                        // 如果没有立即购买按钮，检查是否有"距离开售时间还剩00:00"状态
+                        var prepareSaleBtn = current_webview.findOne(textMatches("距离开售时间还剩\\d{2}:\\d{2}").algorithm('DFS'));
+
+                        if (prepareSaleBtn) {
+                            refresh_attempt_count++;
+                            console.warn("[状态] 商品尚未发售，执行刷新操作 (第" + refresh_attempt_count + "次)");
+
+                            // 检查刷新次数限制
+                            if (refresh_attempt_count >= max_refresh_attempts) {
+                                console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
+                                script_status = 0;
+                                ui.post(() => {
+                                    w.end.attr('visibility', 'gone');
+                                    w.start.attr('visibility', 'visible');
+                                });
+                                break;
+                            }
+
+                            performRefreshActions(current_webview);
+
+                            // 刷新完成后立即检测是否有"立即购买"按钮
+                            console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
+
+                            // 等待页面加载完成
+                            sleep(1000);
+
+                            // 重新获取当前webview
+                            var updated_webview = get_current_webview_fast(current_node);
+                            if (updated_webview) {
+                                var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                                if (buyNowBtn) {
+                                    console.warn("[成功] 🎉 检测到'立即购买'按钮，商品已发售！");
+                                    console.info("[操作] 立即点击购买按钮");
+                                    buyNowBtn.click();
+
+                                    // 重置刷新计数
+                                    refresh_attempt_count = 0;
+
+                                    // 等待页面跳转
+                                    sleep(500);
+                                    break;
+                                } else {
+                                    console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
+                                }
+                            }
+                        } else {
+                            // 如果没有找到任何识别的按钮，检查是否有"距离开售时间还剩00:00"
+                            var prepareSaleBtn = current_webview.findOne(textMatches("距离开售时间还剩\\d{2}:\\d{2}").algorithm('DFS'));
+
+                            if (prepareSaleBtn) {
+                                console.info("[检测] 发现倒计时文字，商品尚未发售，等待500ms后再次检测");
+                                sleep(500);
+
+                                // 重新获取当前webview，检查是否有"立即购买"按钮
+                                var updated_webview = get_current_webview_fast(current_node);
+                                if (updated_webview) {
+                                    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                                    if (buyNowBtn) {
+                                        console.warn("[成功] 🎉 等待期间检测到'立即购买'按钮，商品已发售！");
+                                        console.info("[操作] 立即点击购买按钮");
+                                        buyNowBtn.click();
+
+                                        // 重置刷新计数
+                                        refresh_attempt_count = 0;
+
+                                        // 等待页面跳转
+                                        sleep(500);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 如果没有找到任何识别的按钮，进行刷新
+                            console.info("[操作] 未识别到购买按钮，执行刷新操作");
+                            performRefreshActions(current_webview);
+
+                            // 刷新完成后立即检测是否有"立即购买"按钮
+                            sleep(1000);
+                            var updated_webview = get_current_webview_fast(current_node);
+                            if (updated_webview) {
+                                var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                                if (buyNowBtn) {
+                                    console.warn("[成功] 🎉 检测到'立即购买'按钮，商品已发售！");
+                                    console.info("[操作] 立即点击购买按钮");
+                                    buyNowBtn.click();
+
+                                    // 重置刷新计数
+                                    refresh_attempt_count = 0;
+
+                                    // 等待页面跳转
+                                    sleep(500);
+                                    break;
+                                } else {
+                                    console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
@@ -771,6 +1354,116 @@ while (true) {
                 sleep(150);
             }
             // Acknowledge page logic
+            break;
+        case "prepare_sale":
+            submit_flag = false;
+            ignore_next_purchase_page_flag = false;
+
+            // 检查刷新次数限制
+            if (refresh_attempt_count >= max_refresh_attempts) {
+                console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
+                script_status = 0;
+                ui.post(() => {
+                    w.end.attr('visibility', 'gone');
+                    w.start.attr('visibility', 'visible');
+                });
+                break;
+            }
+
+                        console.warn("[状态] 检测到准备发售状态，商品尚未正式发售 (第" + (refresh_attempt_count + 1) + "次检查)");
+
+            // 检查是否有"距离开售时间还剩00:00"文字
+            var prepareSaleBtn = current_webview.findOne(textMatches("距离开售时间还剩\\d{2}:\\d{2}").algorithm('DFS'));
+            
+            if (prepareSaleBtn) {
+                refresh_attempt_count++;
+                
+                console.info("[操作] 发现'距离开售时间还剩00:00'文字，先等待500ms检测是否有'立即购买'按钮 (第" + refresh_attempt_count + "次)");
+                
+                // 在刷新之前先等待500ms，检测是否有"立即购买"按钮出现
+                console.info("[等待] 等待500ms检测是否有'立即购买'按钮出现...");
+                sleep(500);
+                
+                // 重新获取当前webview，检查是否有"立即购买"按钮
+                var updated_webview = get_current_webview_fast(current_node);
+                if (updated_webview) {
+                    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                    if (buyNowBtn) {
+                        console.warn("[成功] 🎉 等待期间检测到'立即购买'按钮，商品已发售！");
+                        console.info("[操作] 立即点击购买按钮，跳过刷新操作");
+                        buyNowBtn.click();
+                        
+                        // 重置刷新计数
+                        refresh_attempt_count = 0;
+                        rebuy_flag = false;
+                        
+                        // 等待页面跳转
+                        sleep(500);
+                        break;
+                    }
+                }
+                
+                // 如果没有检测到"立即购买"按钮，才进行刷新操作
+                console.info("[检测] 500ms内未检测到'立即购买'按钮，开始执行刷新操作");
+                
+                if (refresh_on_prepare_sale) {
+                    performRefreshActions(current_webview);
+                    
+                    // 刷新完成后立即检测是否有"立即购买"按钮
+                    console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
+                    
+                    // 等待页面加载完成
+                    sleep(1000);
+                    
+                    // 重新获取当前webview（可能已经更新）
+                    var updated_webview_after_refresh = get_current_webview_fast(current_node);
+                    if (updated_webview_after_refresh) {
+                        var buyNowBtn = updated_webview_after_refresh.findOne(text("立即购买").algorithm('DFS'));
+                        if (buyNowBtn) {
+                            console.warn("[成功] 🎉 刷新后检测到'立即购买'按钮，商品已发售！");
+                            console.info("[操作] 立即点击购买按钮");
+                            buyNowBtn.click();
+                            
+                            // 重置刷新计数
+                            refresh_attempt_count = 0;
+                            rebuy_flag = false;
+                            
+                            // 等待页面跳转
+                            sleep(500);
+                            break;
+                        } else {
+                            console.info("[检测] 刷新后暂未发现'立即购买'按钮，继续等待");
+                        }
+                    }
+                } else {
+                    console.info("[配置] 准备发售状态刷新已禁用，仅等待");
+                }
+                
+                // 等待一段时间后再检查
+                sleep(refresh_delay);
+            } else {
+                // 如果没有找到相关按钮，可能页面已经改变，重新检测
+                console.info("[操作] 未找到发售状态按钮，可能页面已更新或商品已发售");
+                
+                // 立即检测是否有"立即购买"按钮
+                var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+                if (buyNowBtn) {
+                    console.warn("[成功] 🎉 检测到'立即购买'按钮，商品已发售！");
+                    console.info("[操作] 立即点击购买按钮");
+                    buyNowBtn.click();
+                    
+                    // 重置刷新计数
+                    refresh_attempt_count = 0;
+                    rebuy_flag = false;
+                    
+                    // 等待页面跳转
+                    sleep(500);
+                    break;
+                }
+                
+                refresh_attempt_count = 0; // 重置刷新计数
+                sleep(200);
+            }
             break;
         case "error":
             rebuy_flag = false;
@@ -875,6 +1568,15 @@ while (true) {
                                 }
                             }
                             if (sold_out) {
+                                var current_time = new Date().getTime();
+                                if (current_time - start_time > timeout_sleep_time) {
+                                    timeout_flag = true;
+                                    console.warn("已超过3分钟未识别到确认按钮，执行暂停操作");
+                                    console.warn("等待15秒后重新开始...");
+                                    sleep(timeout_sleep_wait_time); // 等待15秒
+                                    start_time = new Date().getTime();
+                                    break;
+                                }
                                 console.warn("已售罄");
                             } else if (confirm_btn) {
                                 console.warn("有库存");
@@ -1010,6 +1712,94 @@ while (true) {
                 confirm_btn.click();
             }
             sleep(200);
+            break;
+        case "password_test":
+            // 密码输入测试模式 - 独立测试模式
+            console.info("=== [密码测试模式] 开始独立测试 ===");
+            
+            // 获取密码键盘坐标并打印
+            var coordinates = getPasswordKeyboardCoordinates();
+            
+            if (coordinates && Object.keys(coordinates).length > 0) {
+                console.info("🎯 [测试结果] 成功找到 " + Object.keys(coordinates).length + " 个数字按钮");
+                
+                // 打印所有找到的坐标详情
+                console.info("📍 [坐标详情] 数字按钮坐标如下：");
+                for (var digit in coordinates) {
+                    var coord = coordinates[digit];
+                    console.info("   数字 " + digit + " -> 中心坐标: (" + coord.x + ", " + coord.y + ")");
+                    console.info("   数字 " + digit + " -> 边界: left=" + coord.left + ", top=" + coord.top + ", right=" + coord.right + ", bottom=" + coord.bottom);
+                }
+                
+                                 // 检查是否有足够的数字来输入用户设置的密码
+                 var password = password_setting.toString();
+                 var canInputPassword = true;
+                 var missingDigits = [];
+                 
+                 console.info("🔧 [密码设置] 使用用户设置的密码: " + password);
+                 
+                 for (var i = 0; i < password.length; i++) {
+                     var digit = password.charAt(i);
+                     if (!coordinates[digit]) {
+                         missingDigits.push(digit);
+                         canInputPassword = false;
+                     }
+                 }
+                 
+                 if (canInputPassword) {
+                     console.info("✅ [密码检查] 所有必需数字都已找到，开始模拟输入密码: " + password);
+                    
+                    // 模拟点击密码输入
+                    for (var i = 0; i < password.length; i++) {
+                        var digit = password.charAt(i);
+                        var coord = coordinates[digit];
+                        
+                        console.info("👆 [点击操作] 第" + (i + 1) + "步: 点击数字 " + digit + " 坐标: (" + coord.x + ", " + coord.y + ")");
+                        click(coord.x, coord.y);
+                        sleep(800); // 每次点击间隔800ms，便于观察
+                    }
+                    
+                    console.info("🎉 [输入完成] 密码 " + password + " 输入完成！");
+                    
+                    // 尝试找到确认按钮
+                    sleep(1000);
+                    console.info("🔍 [搜索确认] 开始搜索确认按钮...");
+                    
+                    var confirmButton = text("确认").findOne(1000);
+                    if (!confirmButton) {
+                        confirmButton = text("完成").findOne(1000);
+                    }
+                    if (!confirmButton) {
+                        confirmButton = desc("确认").findOne(1000);
+                    }
+                    if (!confirmButton) {
+                        confirmButton = desc("完成").findOne(1000);
+                    }
+                    if (!confirmButton) {
+                        confirmButton = text("确定").findOne(1000);
+                    }
+                    if (!confirmButton) {
+                        confirmButton = desc("确定").findOne(1000);
+                    }
+                    
+                    if (confirmButton) {
+                        var confirmCoord = confirmButton.bounds();
+                        console.info("✅ [找到确认] 确认按钮坐标: (" + confirmCoord.centerX() + ", " + confirmCoord.centerY() + ")");
+                        console.info("👆 [点击确认] 自动点击确认按钮");
+                        confirmButton.click();
+                        console.info("🎯 [测试完成] 密码输入和确认操作全部完成！");
+                    } else {
+                        console.warn("⚠️ [未找到] 未找到确认按钮，需要手动确认");
+                    }
+                } else {
+                    console.error("❌ [测试失败] 无法完成密码输入测试，缺少以下数字按钮: " + missingDigits.join(", "));
+                }
+            } else {
+                console.warn("⚠️ [搜索失败] 当前界面未找到任何数字按钮");
+            }
+            
+            console.info("⏳ [等待检测] 等待3秒后继续检测...");
+            sleep(3000);
             break;
         case "default":
             // Default logic
