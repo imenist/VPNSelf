@@ -61,20 +61,29 @@ var timeout_sleep_time = parseInt(timeout_sleep_time_conf) || 3 * 60 * 10000;
 var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 15000;
 var special_confirm_delay = parseInt(special_confirm_delay_conf) || 1750;
 
+// 快速模式配置 - 减少各种延迟时间
+var fast_mode = true; // 默认启用快速模式
+var fast_mode_main_loop_delay = fast_mode ? 5 : 10; // 主循环延迟
+var fast_mode_stop_delay = fast_mode ? 10 : 20; // 停止时延迟
+var fast_mode_check_interval = fast_mode ? 5 : 10; // 检查间隔
+var fast_mode_selection_delay = fast_mode ? 0 : 50; // 选择后延迟
+
 // 刷新相关配置
 var refresh_on_prepare_sale = true; // 是否在准备发售状态下自动刷新
 var max_refresh_attempts = 50; // 最大刷新尝试次数
 var refresh_attempt_count = 0; // 当前刷新尝试次数
 var start_time = 0;
 
-console.info('[欢迎使用] Dr. PopMart 抢购脚本');
+console.info('[欢迎使用]  抢购脚本');
 console.warn('目前的购买方案为: ', purchase_type);
 console.warn('目前的抢购数量为: ', purchase_count);
 console.warn('目前的抢购规格为: ', specs);
+console.info('🚀[规格识别] 支持动态规格识别：单个/整盒/整端');
 console.info('🚀[新功能] 已添加"距离开售时间还剩00:00"状态检测');
 console.info('🚀[新功能] 自动下拉刷新功能已启用(仅在小程序内部)');
 console.info('🚀[新功能] 刷新后立即检测"立即购买"按钮');
 console.info('🚀[新功能] 最大刷新次数限制: ' + max_refresh_attempts + '次');
+console.info('🚀[新功能] 快速模式已启用 - 优化库存刷新启动速度');
 if (onFreeTrial) {
     console.error('目前为免费试用版, 功能受到限制，如果觉得好用请重新订阅后再次购买!');
     console.error('在试用期间, 刷新速度的配置选项将无效, 固定为2000ms(2秒)');
@@ -87,26 +96,52 @@ if (onFreeTrial) {
 
 var storage = storages.create('DRP');
 var w = floaty.window(
-    <vertical id="main_window" bg="#000000" alpha="0.9" w="100">
-        <text id="title" text="Dr. PopMart" gravity="center" textColor="#66ccff" textStyle="bold" />
+    <vertical id="main_window" w="200" padding="6">
+        <text id="param_summary" text="参数加载中..." textColor="#888888" textSize="11sp" marginBottom="8" maxLines="4" gravity="left" />
         <horizontal>
-            <button id="start" text="运行" bg="#00FFFF" w="100" visibility="visible" />
-            <button id="end" text="停止" bg="#FF0000" w="100" visibility="gone" />
+            <button id="move_start" text="长按移动" bg="#ffffff" w="80" h="45" visibility="visible" marginBottom="8" />
+        </horizontal>
+        <button id="settings" text="设置" bg="#000000" color="#ffffff" w="80" h="45" marginBottom="8" />
+        <horizontal>
+            <button id="start" text="开始" bg="#E83828" w="80" visibility="visible"/>
+            <button id="end" text="停止" bg="#444444" w="80" visibility="gone" />
         </horizontal >
-        <button text="" bg="#111111" w="50" h="10" />
-        <horizontal>
-            <button id="type_settings" text="方式" bg="#66ccff" w="50" h="40" />
-            <button id="number_settings" text="数量" bg="#f0ff0f" w="50" h="40" />
-        </horizontal>
-        <button text="" bg="#111111" w="50" h="10" />
-        <horizontal>
-            <button id="move_start" text="移动" bg="#f0ff0f" w="100" h="40" visibility="visible" />
-            <button id="move_end" text="固定" bg="#00FFFF" w="100" h="40" visibility="gone" />
-        </horizontal>
     </vertical>
 );
 
 w.main_window.attr('alpha', main_window_alpha);
+
+// 检查本地是否有配置文件（如config.json），有则隐藏设置按钮
+let configFileExists = false;
+try {
+    let configPath = files.join(files.cwd(), 'config.json');
+    if (files.exists(configPath)) {
+        configFileExists = true;
+    }
+} catch (e) {
+    configFileExists = false;
+}
+
+if (configFileExists) {
+    w.settings.attr('visibility', 'gone');
+} else {
+    w.settings.attr('visibility', 'visible');
+}
+
+function updateParamSummary() {
+    let summary =
+        "配送: " + purchase_type + " | " +
+        "规格: " + specs + " | " +
+        "数量: " + purchase_count + "\n" +
+        "刷新: " + refresh_delay + "ms | " +
+        "随机: " + random_refresh_delay_lower + "-" + random_refresh_delay_upper + "ms\n" +
+        "最大时长: " + max_refresh_time + "min | " +
+        "振动: " + vibrate_time + "ms";
+    w.param_summary.setText(summary);
+}
+
+// 初始化时显示一次
+updateParamSummary();
 
 function start() {
     script_status = 1;
@@ -131,57 +166,102 @@ w.end.click(function () {
     console.error("[状态] 抢购脚本停止");
 });
 
-w.move_start.click(function () {
-    w.setAdjustEnabled(true)
-    w.move_start.attr('visibility', 'gone');
-    w.move_end.attr('visibility', 'visible');
-});
+// 长按500ms移动，点击固定（无setAdjustEnabled，不出现四角符号）
+let moveStartPressTimer = null;
+let moveStartPressed = false;
+let moveStartLongPressed = false;
+let startX = 0, startY = 0, windowX = 0, windowY = 0;
 
-w.move_end.click(function () {
-    w.setAdjustEnabled(false)
-    w.move_start.attr('visibility', 'visible');
-    w.move_end.attr('visibility', 'gone');
-    // Save position to storage and warn
-    var x = w.getX();
-    var y = w.getY();
-    storage.put('floaty_position_x', x);
-    storage.put('floaty_position_y', y);
-    console.warn("[提示] 悬浮窗位置已记录");
-});
-
-w.type_settings.click(function () {
-    'ui';
-    const deliveryOptions = ['送到家', '到店取', '来回刷'];
-    var deliveryTypeIdx = deliveryOptions.indexOf(purchase_type);
-    dialogs
-        .singleChoice('请选择配送方案', deliveryOptions, deliveryTypeIdx)
-        .then((i) => {
-            switch (i) {
-                case 0:
-                    purchase_type = '送到家';
-                    break;
-                case 1:
-                    purchase_type = '到店取';
-                    break;
-                case 2:
-                    purchase_type = '来回刷';
-                    break;
+w.move_start.setOnTouchListener(function(view, event) {
+    switch (event.getAction()) {
+        case event.ACTION_DOWN:
+            moveStartPressed = true;
+            moveStartLongPressed = false;
+            startX = event.getRawX();
+            startY = event.getRawY();
+            windowX = w.getX();
+            windowY = w.getY();
+            moveStartPressTimer = setTimeout(function() {
+                if (moveStartPressed) {
+                    moveStartLongPressed = true;
+                }
+            }, 500);
+            return true;
+        case event.ACTION_MOVE:
+            if (moveStartLongPressed) {
+                let dx = event.getRawX() - startX;
+                let dy = event.getRawY() - startY;
+                w.setPosition(windowX + dx, windowY + dy);
             }
-            console.info('目前的购买方案为: ', purchase_type);
-            console.info('如果已在运行状态，请停止后重新运行');
-        });
+            return true;
+        case event.ACTION_UP:
+        case event.ACTION_CANCEL:
+            moveStartPressed = false;
+            if (moveStartPressTimer) {
+                clearTimeout(moveStartPressTimer);
+            }
+            // 松开时保存位置
+            if (moveStartLongPressed) {
+                var x = w.getX();
+                var y = w.getY();
+                storage.put('floaty_position_x', x);
+                storage.put('floaty_position_y', y);
+                console.warn("[提示] 悬浮窗位置已记录");
+            }
+            return true;
+    }
+    return false;
 });
 
-w.number_settings.click(function () {
+w.settings.click(function () {
     'ui';
-    dialogs.rawInput('请输入购买数量', purchase_count).then((new_purchase_count) => {
-        if (parseInt(new_purchase_count) > 0) {
-            purchase_count = parseInt(new_purchase_count);
-            console.info('目前的购买数量为: ', purchase_count);
-            console.info('如果已在运行状态，请停止后重新运行');
-        } else {
-            console.info('请输入正整数, [', new_purchase_count, ']不符合规范');
-        }
+    dialogs.singleChoice('选择配送方式', ['送到家', '到店取', '来回刷'], ['送到家', '到店取', '来回刷'].indexOf(purchase_type))
+    .then(function(deliveryIdx) {
+        if (deliveryIdx < 0) return;
+        purchase_type = ['送到家', '到店取', '来回刷'][deliveryIdx];
+        updateParamSummary();
+        dialogs.singleChoice('选择购买规格', ['单个', '整盒'], ['单个', '整盒'].indexOf(specs))
+        .then(function(specsIdx) {
+            if (specsIdx < 0) return;
+            specs = ['单个', '整盒'][specsIdx];
+            updateParamSummary();
+            dialogs.rawInput('请输入购买数量', purchase_count.toString())
+            .then(function(count) {
+                if (parseInt(count) > 0) purchase_count = parseInt(count);
+                updateParamSummary();
+                dialogs.rawInput('库存刷新间隔时间(ms)', refresh_delay.toString())
+                .then(function(delay) {
+                    if (parseInt(delay) > 0) refresh_delay = parseInt(delay);
+                    updateParamSummary();
+                    dialogs.rawInput('库存刷新额外最小随机间隔(ms)', random_refresh_delay_lower.toString())
+                    .then(function(rmin) {
+                        if (parseInt(rmin) > 0) random_refresh_delay_lower = parseInt(rmin);
+                        updateParamSummary();
+                        dialogs.rawInput('库存刷新额外最大随机间隔(ms)', random_refresh_delay_upper.toString())
+                        .then(function(rmax) {
+                            if (parseInt(rmax) > 0) random_refresh_delay_upper = parseInt(rmax);
+                            updateParamSummary();
+                            dialogs.rawInput('库存刷新最大时长(分钟, 0为不限)', max_refresh_time.toString())
+                            .then(function(maxr) {
+                                if (!isNaN(parseFloat(maxr))) max_refresh_time = parseFloat(maxr);
+                                updateParamSummary();
+                                dialogs.rawInput('支付页面振动时长(ms)', vibrate_time.toString())
+                                .then(function(vib) {
+                                    if (parseInt(vib) > 0) vibrate_time = parseInt(vib);
+                                    updateParamSummary();
+                                    dialogs.rawInput('支付密码（如需自动输入）', password_setting.toString())
+                                    .then(function(pwd) {
+                                        if (pwd) password_setting = pwd;
+                                        updateParamSummary();
+                                        toast('参数设置完成！');
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+        });
     });
 });
 
@@ -195,7 +275,6 @@ if (typeof posX === 'number' && typeof posY === 'number' && posX >= 0 && posX + 
 } else {
     w.setPosition(defaultX, defaultY);
 }
-
 
 function clickNotifyBtn() {
     var btn = className("android.widget.TextView").text("到货通知").findOne(100);
@@ -261,6 +340,7 @@ function get_webview_parent(input_node) {
 
     return output_node;
 }
+
 function get_header_text(current_node) {
     // Get first child if any
     if (!current_node) {
@@ -465,7 +545,6 @@ function get_current_webview_fast(current_node) {
 
     return null;
 }
-
 
 function check_current_page_tree(header_text, current_webview) {
     console.info("check_current_page_tree");
@@ -724,6 +803,7 @@ function click_plus_btn(current_webview) {
 
     plus_btn.click();
 }
+
 function satisfyPurchaseCount(current_webview, target) {
     var number_text = current_webview.findOne(className("android.widget.TextView").text("数量").algorithm('DFS'));
     var idx_num_text = number_text.indexInParent()
@@ -766,6 +846,12 @@ function waitAndInputPassword(password) {
     
     // 循环等待直到找到足够的数字按钮
     while (Date.now() - startTime < maxWaitTime) {
+        // 检查脚本状态，如果被暂停则退出
+        if (script_status == 0) {
+            console.info("[密码输入] 脚本已暂停，退出密码输入");
+            return false;
+        }
+        
         coordinates = getPasswordKeyboardCoordinates();
         
         if (coordinates && Object.keys(coordinates).length >= 9) {
@@ -777,6 +863,12 @@ function waitAndInputPassword(password) {
         sleep(1000); // 等待1秒后重试
     }
     
+    // 再次检查脚本状态
+    if (script_status == 0) {
+        console.info("[密码输入] 脚本已暂停，退出密码输入");
+        return false;
+    }
+    
     if (!coordinates || Object.keys(coordinates).length < 9) {
         console.error("[密码输入] 等待超时或未找到足够的数字按钮");
         return false;
@@ -786,6 +878,12 @@ function waitAndInputPassword(password) {
     console.info("[密码输入] 开始输入密码: " + password);
     
     for (var i = 0; i < password.length; i++) {
+        // 在每次输入前检查脚本状态
+        if (script_status == 0) {
+            console.info("[密码输入] 脚本已暂停，停止密码输入");
+            return false;
+        }
+        
         var digit = password.charAt(i);
         var coord = coordinates[digit];
         
@@ -800,6 +898,12 @@ function waitAndInputPassword(password) {
     }
     
     console.info("[密码输入] 密码输入完成！");
+    
+    // 在点击确认前检查脚本状态
+    if (script_status == 0) {
+        console.info("[密码输入] 脚本已暂停，跳过确认按钮点击");
+        return false;
+    }
     
     // 可选：自动点击确认按钮
     sleep(500);
@@ -835,6 +939,12 @@ function getPasswordKeyboardCoordinates() {
         
         // 遍历数字1到9
         for (var i = 1; i <= 9; i++) {
+            // 检查脚本状态，如果被暂停则退出
+            if (script_status == 0) {
+                console.info("[密码坐标] 脚本已暂停，退出密码键盘坐标搜索");
+                return null;
+            }
+            
             var numberText = i.toString();
             
             // 尝试多种方法查找数字按钮
@@ -902,6 +1012,12 @@ function getPasswordKeyboardCoordinates() {
         }
         
         // 也尝试查找数字0
+        // 检查脚本状态，如果被暂停则退出
+        if (script_status == 0) {
+            console.info("[密码坐标] 脚本已暂停，退出密码键盘坐标搜索");
+            return null;
+        }
+        
         var zeroButton = null;
         zeroButton = text("0").findOne(200);
         if (!zeroButton) {
@@ -958,6 +1074,12 @@ function getPasswordKeyboardCoordinates() {
             
             // 输出所有坐标信息
             for (var i = 1; i <= 9; i++) {
+                // 检查脚本状态，如果被暂停则退出
+                if (script_status == 0) {
+                    console.info("[密码坐标] 脚本已暂停，退出坐标信息输出");
+                    return null;
+                }
+                
                 var digit = i.toString();
                 if (numberCoordinates[digit]) {
                     var coord = numberCoordinates[digit];
@@ -1032,11 +1154,11 @@ while (true) {
         last_confirm_time = 0;
         confirm_btn_retry_count = 0;
         refresh_attempt_count = 0; // 重置刷新尝试次数
-        sleep(100);
+        sleep(fast_mode_stop_delay); // 使用快速模式停止延迟
         continue;
     }
     // log("===start===")
-    sleep(50);
+    sleep(fast_mode_main_loop_delay); // 使用快速模式主循环延迟
     // console.time("get_webview_parent_node");
     var webview_parent_node = get_webview_parent_node();
     if (!webview_parent_node) {
@@ -1480,35 +1602,189 @@ while (true) {
             submit_flag = false;
             dc_streak = 0;
             if (!rebuy_flag) {
-                var purchase_type_text = current_webview.findOne(text("购买方式").algorithm('DFS'));
-                if (purchase_type_text) {
-                    if (purchase_type != '来回刷') {
-                        log("当前可以选择购买方式");
-                        var purchase_type_btn = current_webview.findOne(text(purchase_type).algorithm('DFS'));
-                        if (purchase_type_btn) {
-                            purchase_type_btn.click();
+                // 优化的并行识别和点击逻辑
+                console.info("[并行选择] 开始同时识别购买方式和规格...");
+                
+                // 并行查找购买方式和规格的相关元素
+                var purchase_type_btn = null;
+                var specs_btn = null;
+                var purchase_found_method = "";
+                var specs_found_method = "";
+                
+                // 快速扫描页面中的所有相关元素
+                console.info("[并行选择] 开始快速扫描页面元素...");
+                var allElements = current_webview.find(className("android.view.View").algorithm('DFS'));
+                var purchase_elements = [];
+                var specs_elements = [];
+                
+                for (var i = 0; i < allElements.length; i++) {
+                    var element = allElements[i];
+                    try {
+                        var elementText = element.text();
+                        if (elementText) {
+                            // 检查购买方式元素
+                            if (purchase_type != '来回刷' && (elementText.includes(purchase_type) || elementText.includes("送到家") || elementText.includes("到店取"))) {
+                                purchase_elements.push({
+                                    text: elementText,
+                                    element: element,
+                                    clickable: element.clickable()
+                                });
+                            }
+                            
+                            // 检查规格元素
+                            if (elementText.includes("单个") || elementText.includes("整盒") || elementText.includes("整端") || elementText.includes("盲盒")) {
+                                specs_elements.push({
+                                    text: elementText,
+                                    element: element,
+                                    clickable: element.clickable()
+                                });
+                            }
                         }
-                        log("已选择购买方式：" + purchase_type);
-                        sleep(50);
+                    } catch (e) {
+                        // 忽略错误
                     }
-
                 }
-                var specs_text = current_webview.findOne(text("选择规格").algorithm('DFS'));
-                if (specs_text) {
-                    log("当前可以选择规格");
-                    var specs_btn = current_webview.findOne(textStartsWith(specs).algorithm('DFS'));
-                    if (specs_btn) {
+                
+                console.info("[并行选择] 扫描完成 - 购买方式元素: " + purchase_elements.length + " 个, 规格元素: " + specs_elements.length + " 个");
+                
+                // 并行处理购买方式选择
+                if (purchase_type != '来回刷') {
+                    console.info("[并行选择] 处理购买方式: " + purchase_type);
+                    
+                    // 方法1: 从扫描结果中快速匹配
+                    for (var i = 0; i < purchase_elements.length; i++) {
+                        var element = purchase_elements[i];
+                        if (element.text.includes(purchase_type)) {
+                            purchase_type_btn = element.element;
+                            purchase_found_method = "扫描匹配";
+                            console.info("[并行选择] 购买方式扫描匹配成功: " + element.text);
+                            break;
+                        }
+                    }
+                    
+                    // 方法2: 如果扫描没找到，使用传统方法
+                    if (!purchase_type_btn) {
+                        purchase_type_btn = current_webview.findOne(text(purchase_type).algorithm('DFS'));
+                        if (purchase_type_btn) {
+                            purchase_found_method = "精确匹配";
+                        } else {
+                            purchase_type_btn = current_webview.findOne(textStartsWith(purchase_type).algorithm('DFS'));
+                            if (purchase_type_btn) {
+                                purchase_found_method = "模糊匹配";
+                            }
+                        }
+                    }
+                }
+                
+                // 并行处理规格选择
+                console.info("[并行选择] 处理规格: " + specs);
+                
+                // 确定规格关键词
+                var specs_keywords = [];
+                if (specs === "单个") {
+                    specs_keywords = ["单个", "盲盒"];
+                } else if (specs === "整端(整盒x个)") {
+                    specs_keywords = ["整盒", "整端"];
+                } else {
+                    specs_keywords = [specs];
+                }
+                
+                // 方法1: 从扫描结果中快速匹配
+                for (var i = 0; i < specs_elements.length; i++) {
+                    var element = specs_elements[i];
+                    for (var j = 0; j < specs_keywords.length; j++) {
+                        var keyword = specs_keywords[j];
+                        if (element.text.includes(keyword)) {
+                            specs_btn = element.element;
+                            specs_found_method = "扫描匹配";
+                            console.info("[并行选择] 规格扫描匹配成功: " + element.text);
+                            break;
+                        }
+                    }
+                    if (specs_btn) break;
+                }
+                
+                // 方法2: 如果扫描没找到，使用传统方法
+                if (!specs_btn) {
+                    for (var i = 0; i < specs_keywords.length; i++) {
+                        var keyword = specs_keywords[i];
+                        specs_btn = current_webview.findOne(text(keyword).algorithm('DFS'));
+                        if (specs_btn) {
+                            specs_found_method = "精确匹配";
+                            break;
+                        }
+                        specs_btn = current_webview.findOne(textMatches(".*" + keyword + ".*").algorithm('DFS'));
+                        if (specs_btn) {
+                            specs_found_method = "包含匹配";
+                            break;
+                        }
+                    }
+                }
+                
+                // 并行执行点击操作
+                console.info("[并行选择] 开始执行点击操作...");
+                
+                // 点击购买方式
+                if (purchase_type_btn && purchase_type != '来回刷') {
+                    console.info("[并行选择] 点击购买方式，匹配方式: " + purchase_found_method);
+                    try {
+                        purchase_type_btn.click();
+                        console.info("[并行选择] 购买方式点击成功");
+                        log("已选择购买方式：" + purchase_type + " (匹配方式: " + purchase_found_method + ")");
+                    } catch (e) {
+                        console.error("[并行选择] 购买方式点击失败: " + e.message);
+                        try {
+                            var bounds = purchase_type_btn.bounds();
+                            click(bounds.centerX(), bounds.centerY());
+                            console.info("[并行选择] 购买方式坐标点击成功");
+                        } catch (e2) {
+                            console.error("[并行选择] 购买方式坐标点击也失败: " + e2.message);
+                        }
+                    }
+                } else if (purchase_type != '来回刷') {
+                    console.warn("[并行选择] 未找到购买方式按钮: " + purchase_type);
+                }
+                
+                // 点击规格
+                if (specs_btn) {
+                    console.info("[并行选择] 点击规格，匹配方式: " + specs_found_method);
+                    try {
                         specs_btn.click();
+                        console.info("[并行选择] 规格点击成功");
+                        log("已选择规格：" + specs + " (匹配方式: " + specs_found_method + ")");
+                    } catch (e) {
+                        console.error("[并行选择] 规格点击失败: " + e.message);
+                        try {
+                            var bounds = specs_btn.bounds();
+                            click(bounds.centerX(), bounds.centerY());
+                            console.info("[并行选择] 规格坐标点击成功");
+                        } catch (e2) {
+                            console.error("[并行选择] 规格坐标点击也失败: " + e2.message);
+                        }
                     }
-                    log("已选择规格：" + specs);
-                    sleep(100 + extra_delay);
+                } else {
+                    console.warn("[并行选择] 未找到规格按钮: " + specs);
                 }
+                
+                // 立即开始库存刷新，零延迟启动
+                var selectionEndTime = new Date().getTime();
+                console.info("[并行选择] 选择操作完成，立即开始库存刷新");
+                
+                // 异步处理通知按钮点击，不阻塞主流程
                 if (auto_click_notification) {
-                    clickNotifyBtn();
+                    setTimeout(function() {
+                        clickNotifyBtn();
+                    }, 5); // 进一步减少异步延迟
                 }
-                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                
                 var refreshTimeStart = new Date();
                 var current_selection = "到店取";
+                
+                // 立即开始查找确定按钮，零延迟
+                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                var refreshStartTime = new Date().getTime();
+                console.info("[性能] 库存刷新循环启动时间: " + refreshStartTime + "ms");
+                
                 while (!confirm_btn && !rebuy_flag) {
                     // max duration logic
                     if (max_refresh_time > 0) {
@@ -1555,7 +1831,7 @@ while (true) {
                                 if (sold_out) {
                                     break;
                                 }
-                                sleep(20);
+                                sleep(fast_mode_check_interval); // 使用快速模式检查间隔
                                 confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
                                 if (confirm_btn) {
                                     break;
@@ -1630,13 +1906,21 @@ while (true) {
                     if (confirm_btn) {
                         break;
                     }
-                    var random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
-                    if (!enable_random_delay_conf) {
-                        random_delay = 0;
+                    // 优化刷新延迟计算
+                    var random_delay = 0;
+                    if (enable_random_delay_conf) {
+                        random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
                     }
 
                     var sleepTarget = refresh_delay + random_delay;
+                    
+                    // 在等待前先快速检查一次确定按钮
+                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                    if (confirm_btn) break;
+                    
                     sleep(sleepTarget);
+                    
+                    // 等待后再次检查确定按钮
                     confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
                     if (confirm_btn) break;
 
@@ -1645,11 +1929,7 @@ while (true) {
                         break;
                     }
 
-                    console.info("[注意] 库存刷新耗时: ", refresh_delay + random_delay, "ms");
-                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                    if (confirm_btn) {
-                        break;
-                    }
+                    console.info("[注意] 库存刷新耗时: ", sleepTarget, "ms");
 
                 }
                 if (script_status == 0) {
@@ -1726,6 +2006,12 @@ while (true) {
                 // 打印所有找到的坐标详情
                 console.info("📍 [坐标详情] 数字按钮坐标如下：");
                 for (var digit in coordinates) {
+                    // 检查脚本状态，如果被暂停则退出
+                    if (script_status == 0) {
+                        console.info("🛑 [详情暂停] 脚本已暂停，退出坐标详情输出");
+                        break;
+                    }
+                    
                     var coord = coordinates[digit];
                     console.info("   数字 " + digit + " -> 中心坐标: (" + coord.x + ", " + coord.y + ")");
                     console.info("   数字 " + digit + " -> 边界: left=" + coord.left + ", top=" + coord.top + ", right=" + coord.right + ", bottom=" + coord.bottom);
@@ -1739,6 +2025,12 @@ while (true) {
                  console.info("🔧 [密码设置] 使用用户设置的密码: " + password);
                  
                  for (var i = 0; i < password.length; i++) {
+                     // 检查脚本状态，如果被暂停则退出
+                     if (script_status == 0) {
+                         console.info("🛑 [检查暂停] 脚本已暂停，退出密码条件检查");
+                         break;
+                     }
+                     
                      var digit = password.charAt(i);
                      if (!coordinates[digit]) {
                          missingDigits.push(digit);
@@ -1751,6 +2043,12 @@ while (true) {
                     
                     // 模拟点击密码输入
                     for (var i = 0; i < password.length; i++) {
+                        // 检查脚本状态，如果被暂停则退出
+                        if (script_status == 0) {
+                            console.info("🛑 [测试暂停] 脚本已暂停，退出密码测试");
+                            break;
+                        }
+                        
                         var digit = password.charAt(i);
                         var coord = coordinates[digit];
                         
@@ -1811,4 +2109,4 @@ while (true) {
             // log("Unknown status: " + page_info.status);
             break;
     }
-}
+} 
