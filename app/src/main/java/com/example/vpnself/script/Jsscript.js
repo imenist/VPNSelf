@@ -1106,7 +1106,6 @@ while (true) {
     }
     // console.timeEnd("get_webview_parent_node");
 
-
     // console.time("get_current_node");
     var current_node = get_current_node(webview_parent_node);
     if (!current_node) {
