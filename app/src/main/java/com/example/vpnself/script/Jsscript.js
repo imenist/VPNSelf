@@ -42,15 +42,15 @@ var script_status = 0;
 var purchase_type = delivery || "到店取";
 var purchase_count = parseInt(purchase_count_conf) || 1;
 var specs = specs_conf || "单个";
-var refresh_delay = parseInt(delay_conf) || 300;
+var refresh_delay = parseInt(delay_conf) || 600;
 var extra_delay = parseInt(extra_delay_conf) || 0;
 var max_refresh_time = parseFloat(max_refresh_time_conf) || 0;
 var auto_click_notification = auto_click_notification_conf || false;
 var random_refresh_delay_lower = Math.max(parseInt(random_delay_lower_conf) || 10, 1);
 var random_refresh_delay_upper = Math.max(parseInt(random_delay_upper_conf) || 150, 1);
 var main_window_alpha = Math.min(Math.max(parseFloat(main_window_alpha_conf) || 0.9, 0.0), 1.0);
-var ignore_ack_click_delay = parseInt(ignore_ack_click_delay_conf) || 400;
-var ignore_ack_click_confirm_delay = parseInt(ignore_ack_click_confirm_delay_conf) || 600;
+var ignore_ack_click_delay = parseInt(ignore_ack_click_delay_conf) || 200;
+var ignore_ack_click_confirm_delay = parseInt(ignore_ack_click_confirm_delay_conf) || 800;
 var last_double_confirm_time = 0;
 var last_confirm_time = 0;
 var vibrate_time = parseInt(vibrate_time_conf) || 3000;
@@ -98,8 +98,8 @@ var w = floaty.window(
             <button id="move_start" text="长按移动" bg="#ffffff" w="80" h="45" visibility="visible" marginBottom="8" />
         </horizontal>
 
-        <button id="delivery_type" text={"配送: " + purchase_type} bg="#2196F3" color="#ffffff" w="80" h="45" marginBottom="8" />
-        <button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#4CAF50" color="#ffffff" w="80" h="45" marginBottom="8" />
+        <button id="delivery_type" text={"配送: " + purchase_type} bg="#0f57f7" color="#ffffff" w="80" h="45" marginBottom="8" />
+        <button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#65a56d" color="#ffffff" w="80" h="45" marginBottom="8" />
         <button id="settings" text="设置" bg="#000000" color="#ffffff" w="80" h="45" marginBottom="8" />
         <horizontal>
             <button id="start" text="开始" bg="#E83828" w="80" visibility="visible"/>
@@ -707,9 +707,6 @@ function check_current_page_tree(header_text, current_webview) {
     }
     if (header_text === "确认订单") {
         return { header: header_text, status: "confirm_and_pay" };
-    } else if (header_text === "访问异常，请稍后重试") {
-        console.info("访问异常，请稍后重试");
-        return { header: header_text, status: "error" };
     } else if (header_text == "") {
         var startTime = Date.now();
         var purchaseTypeElement = current_webview.findOne(text("购买方式").algorithm('DFS'));
@@ -734,8 +731,20 @@ function check_current_page_tree(header_text, current_webview) {
             return { header: header_text, status: "prepare_sale" };
         }
 
+        var hidden_confirm_btn = current_webview.findOne(text("确认信息并支付").algorithm('DFS'));
+        if (hidden_confirm_btn) {
+            return { header: header_text, status: "confirm_and_pay" };
+        }
+
         return { header: header_text, status: "default" };
     } else {
+        log("标题异常");
+        var hidden_confirm_btn = current_webview.findOne(text("确认信息并支付").algorithm('DFS'));
+        if (hidden_confirm_btn) {
+            log("标题异常 找到 确认信息并支付");
+            return { header: header_text, status: "confirm_and_pay" };
+        }
+
         return { header: header_text, status: "default" };
     }
 }
@@ -1335,6 +1344,9 @@ while (true) {
                         }
                     }
                 }
+            } else if (last_view.childCount() == 1) {
+                submit_flag = true;
+                dc_streak = 0;
             }
             // console.timeEnd("find_double_confirm");
             if (double_confirm) {
@@ -1342,17 +1354,13 @@ while (true) {
                     // console.error("double_confirm click");
                     last_double_confirm_time = new Date().getTime();
                     double_confirm.click();
-                    if (debug_mode_conf) {
-                        console.error("clicked double_confirm");
-                    }
+                    console.error("clicked double_confirm");
                     submit_flag = true;
                     dc_streak++;
                     sleep(250 + extra_delay);
                 } else if (dc_streak >= 10) {
                     double_confirm.click();
-                    if (debug_mode_conf) {
-                        console.error("clicked double_confirm");
-                    }
+                    console.error("clicked double_confirm");
                     submit_flag = true;
                     dc_streak = 0;
                 } else {
@@ -1368,7 +1376,7 @@ while (true) {
             } else {
                 var acknowledge = last_view.findOne(text("我知道了").algorithm('DFS'));
             }
-            if (acknowledge) {
+            if (true) {
                 if (!ignore_ack_conf) {
                     // console.error("click acknowledge");
                     acknowledge.click();
@@ -1386,7 +1394,7 @@ while (true) {
                             console.info("[点击] 确认无误|就是这家")
                             submit_flag = true;
                             dc_streak++;
-                            sleep(50);
+                            sleep(ignore_ack_click_confirm_delay);
                             break;
                         }
                     }
@@ -1397,7 +1405,7 @@ while (true) {
                         dc_streak = 0;
                         hidden_confirm_btn.click();
                         console.info("[点击] 确认信息并支付")
-                        sleep(120);
+                        sleep(ignore_ack_click_delay);
                         submit_flag = false;
                         break;
                     }
