@@ -57,7 +57,7 @@ var vibrate_time = parseInt(vibrate_time_conf) || 3000;
 var password_or_vibrate = password_or_vibrate_conf || "震动(不设置密码)";
 var password_setting = parseInt(password_setting_conf) || 123456;
 var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 0;
-var special_confirm_delay = parseInt(special_confirm_delay_conf) || 1750;
+var special_confirm_delay = parseInt(special_confirm_delay_conf) || 400;
 var ignore_ack_conf = true
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 10
 
@@ -1216,11 +1216,11 @@ while (true) {
         confirm_btn_retry_count = 0;
         refresh_attempt_count = 0; // 重置刷新尝试次数
 
-        sleep(fast_mode_stop_delay); // 使用快速模式停止延迟
+        sleep(100); // 使用快速模式停止延迟
         continue;
     }
     // log("===start===")
-    sleep(fast_mode_main_loop_delay); // 使用快速模式主循环延迟
+    sleep(50); // 使用快速模式主循环延迟
     // console.time("get_webview_parent_node");
     var webview_parent_node = get_webview_parent_node();
     if (!webview_parent_node) {
@@ -1290,20 +1290,52 @@ while (true) {
 
             // console.time("find_last_view");
             var last_view = null;
-            var childCount = current_webview.childCount();
-            for (var i = childCount - 1; i >= 0; i--) {
-                try {
-                    var child = current_webview.child(i);
-                } catch (e) {
-                    break;
+            var childCount = 0;
+            try {
+                childCount = current_webview.childCount();
+            } catch (e) {
+                console.error("[异常] 获取 childCount 失败: " + e.message);
+                sleep(10); // 防止死循环
+                break;
+            }
+            var found = false;
+            var maxTries = 3;
+            var tryCount = 0;
+            while (!found && tryCount < maxTries) {
+                for (var i = childCount - 1; i >= 0; i--) {
+                    var child = null;
+                    try {
+                        child = current_webview.child(i);
+                    } catch (e) {
+                        console.warn("[异常] 获取 child(" + i + ") 失败: " + e.message);
+                        continue;
+                    }
+                    if (!child) {
+                        continue;
+                        console.error("444");
+                    }
+                    if (child.className && child.className() === "android.view.View") {
+                        last_view = child;
+                        found = true;
+                        break;
+                    }
                 }
-                if (!child) {
-                    break;
+                if (!found) {
+                    tryCount++;
+                    console.warn("[警告] 未找到 last_view，第" + tryCount + "次重试");
+                    sleep(100); // 等待一会再重试，防止页面未加载完
+                    try {
+                        childCount = current_webview.childCount();
+                    } catch (e) {
+                        console.error("[异常] 重试时获取 childCount 失败: " + e.message);
+                        break;
+                    }
                 }
-                if (child.className() === "android.view.View") {
-                    last_view = child;
-                    break;
-                }
+            }
+            if (!last_view) {
+                console.error("[错误] 多次重试后仍未找到 last_view，跳过本轮");
+                sleep(200); // 防止空转
+                break;
             }
             // console.timeEnd("find_last_view");
 
@@ -1324,6 +1356,7 @@ while (true) {
             if (confirm_btn) {
                 dc_streak = 0;
                 confirm_btn.click();
+                console.info("[点击] 确认信息并支付1");
                 if (debug_mode_conf) {
                     console.error("clicked confirm_btn");
                 }
@@ -1344,9 +1377,6 @@ while (true) {
                         }
                     }
                 }
-            } else if (last_view.childCount() == 1) {
-                submit_flag = true;
-                dc_streak = 0;
             }
             // console.timeEnd("find_double_confirm");
             if (double_confirm) {
@@ -1354,13 +1384,13 @@ while (true) {
                     // console.error("double_confirm click");
                     last_double_confirm_time = new Date().getTime();
                     double_confirm.click();
-                    console.error("clicked double_confirm");
+                    console.error("[点击] 确认无误|就是这家1");
                     submit_flag = true;
                     dc_streak++;
-                    sleep(250 + extra_delay);
+                    sleep(ignore_ack_click_confirm_delay);
                 } else if (dc_streak >= 10) {
                     double_confirm.click();
-                    console.error("clicked double_confirm");
+                    console.error("[点击] 确认无误|就是这家3");
                     submit_flag = true;
                     dc_streak = 0;
                 } else {
@@ -1371,50 +1401,35 @@ while (true) {
             }
 
 
-            if (ignore_ack_conf) {
-                var acknowledge = current_webview.findOne(text("我知道了").algorithm('DFS'));
-            } else {
-                var acknowledge = last_view.findOne(text("我知道了").algorithm('DFS'));
-            }
-            if (true) {
-                if (!ignore_ack_conf) {
-                    // console.error("click acknowledge");
-                    acknowledge.click();
-                    if (debug_mode_conf) {
-                        console.error("clicked acknowledge");
-                    }
-                    sleep(100);
-                } else {
-                    // 处理"确认无误|就是这家"按钮
-                    var hidden_double_confirm = current_webview.findOne(textMatches(/(确认无误|就是这家)/).algorithm('DFS'));
-                    if (hidden_double_confirm) {
-                        if (dc_streak == 0) {
+
+            // 处理"确认无误|就是这家"按钮
+            var hidden_double_confirm = current_webview.findOne(textMatches(/(确认无误|就是这家)/).algorithm('DFS'));
+                if (hidden_double_confirm) {
+                    if (dc_streak == 0) {
                             last_double_confirm_time = new Date().getTime();
                             hidden_double_confirm.click();
-                            console.info("[点击] 确认无误|就是这家")
+                            console.error("[点击] 确认无误|就是这家2")
                             submit_flag = true;
                             dc_streak++;
                             sleep(ignore_ack_click_confirm_delay);
                             break;
-                        }
                     }
+                }
 
                     // 处理"确认信息并支付"按钮
-                    var hidden_confirm_btn = current_webview.findOne(text("确认信息并支付").algorithm('DFS'));
-                    if (hidden_confirm_btn) {
+            var hidden_confirm_btn = current_webview.findOne(text("确认信息并支付").algorithm('DFS'));
+                if (hidden_confirm_btn) {
                         dc_streak = 0;
                         hidden_confirm_btn.click();
-                        console.info("[点击] 确认信息并支付")
+                        console.info("[点击] 确认信息并支付2")
                         sleep(ignore_ack_click_delay);
                         submit_flag = false;
                         break;
-                    }
                 }
-                submit_flag = false;
+            submit_flag = false;
 
-                break;
-            }
             break;
+
         case "info_page":
             submit_flag = false;
             ignore_next_purchase_page_flag = false;
@@ -1832,13 +1847,13 @@ while (true) {
                 if (auto_click_notification) {
                     clickNotifyBtn(); // 改为同步执行，避免线程冲突
                 }
-                
+
                 var refreshTimeStart = new Date();
                 var current_selection = "到店取";
-                
+
                 // 立即开始查找确定按钮，零延迟
                 var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                
+
                 while (!confirm_btn && !rebuy_flag) {
                     // max duration logic
                     if (max_refresh_time > 0) {
@@ -1959,22 +1974,17 @@ while (true) {
                         break;
                     }
                     // 优化刷新延迟计算
-                    var random_delay = 0;
+                    var random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
                     if (enable_random_delay_conf) {
-                        random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
+                        random_delay = 0;
                     }
 
                     var sleepTarget = refresh_delay + random_delay;
-                    
+                    sleep(sleepTarget);
                     // 在等待前先快速检查一次确定按钮
                     confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
                     if (confirm_btn) break;
-                    
-                    sleep(sleepTarget);
-                    
-                    // 等待后再次检查确定按钮
-                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                    if (confirm_btn) break;
+
 
                     purchase_count_label = current_webview.findOne(text("数量").algorithm('DFS'));
                     if (!purchase_count_label) {
@@ -1982,6 +1992,9 @@ while (true) {
                     }
 
                     console.info("[注意] 库存刷新耗时: ", sleepTarget, "ms");
+                    if (confirm_btn) {
+                        break;
+                    }
 
                 }
                 if (script_status == 0) {
@@ -2002,8 +2015,9 @@ while (true) {
                     var now = new Date().getTime();
                     var elapsed = now - last_double_confirm_time;
                     if (elapsed >= special_confirm_delay) {
-                        console.warn("[等待] 确认按钮点击时间已超过", special_confirm_delay, "ms，点击确认");
+                        console.warn("[操作] 找到确认按钮，点击");
                         confirm_btn.click();
+
                         rebuy_flag = true;
                         ignore_next_purchase_page_flag = true;
                     } else {
@@ -2025,7 +2039,7 @@ while (true) {
                     rebuy_flag = true;
                     ignore_next_purchase_page_flag = true;
                 }
-                sleep(150 + extra_delay);
+                sleep(special_confirm_delay);
             } else {
                 confirm_btn_retry_count++;
                 if (confirm_btn_retry_count >= 10) {
@@ -2049,10 +2063,10 @@ while (true) {
             // Default logic
             break;
         case "no_webview":
-            // log("No current webview found");
+            //log("No current webview found");
             break;
         default:
-            // log("Unknown status: " + page_info.status);
+            //log("Unknown status: ");
             break;
     }
 } 
