@@ -47,7 +47,7 @@ var extra_delay = parseInt(extra_delay_conf) || 0;
 var max_refresh_time = parseFloat(max_refresh_time_conf) || 0;
 var auto_click_notification = auto_click_notification_conf || false;
 var random_refresh_delay_lower = Math.max(parseInt(random_delay_lower_conf) || 10, 1);
-var random_refresh_delay_upper = Math.max(parseInt(random_delay_upper_conf) || 150, 1);
+var random_refresh_delay_upper = Math.max(parseInt(random_delay_upper_conf) || 50, 1);
 var main_window_alpha = Math.min(Math.max(parseFloat(main_window_alpha_conf) || 0.9, 0.0), 1.0);
 var ignore_ack_click_delay = parseInt(ignore_ack_click_delay_conf) || 200;
 var ignore_ack_click_confirm_delay = parseInt(ignore_ack_click_confirm_delay_conf) || 800;
@@ -93,12 +93,12 @@ console.error('就是这家/确认无误点击后等待时间: ', ignore_ack_cli
 
 var storage = storages.create('DRP');
 var w = floaty.window(
-    <vertical id="main_window" w="200" h="300" padding="6">
+    <vertical id="main_window" w="80" h="257">
         <horizontal>
             <button id="move_start" text="长按移动" bg="#ffffff" w="80" h="45" visibility="visible" marginBottom="8" />
         </horizontal>
 
-        <button id="delivery_type" text={"配送: " + purchase_type} bg="#0f57f7" color="#ffffff" w="80" h="45" marginBottom="8" />
+        <button id="delivery_type" text={purchase_type} bg="#0f57f7" color="#ffffff" w="80" h="45" marginBottom="8" />
         <button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#65a56d" color="#ffffff" w="80" h="45" marginBottom="8" />
         <button id="settings" text="设置" bg="#000000" color="#ffffff" w="80" h="45" marginBottom="8" />
         <horizontal>
@@ -129,8 +129,12 @@ if (configFileExists) {
 
 function updateParamSummary() {
     try {
+        let display_count = purchase_count;
+        if (typeof purchase_count === 'number' && purchase_count > 99) {
+            display_count = '99+';
+        }
         w.delivery_type.setText(purchase_type);
-        w.purchase_count_btn.setText('件数: ' + purchase_count);
+        w.purchase_count_btn.setText('件数: ' + display_count);
         return;
     } catch (e) {
 
@@ -183,18 +187,26 @@ w.end.click(function () {
 
 // 添加配送方式按钮点击事件
 w.delivery_type.click(function () {
-    var deliveryOptions = ['送到家', '到店取'];
-    var currentIdx = deliveryOptions.indexOf(purchase_type);
-
-    dialogs.singleChoice('选择配送方式', deliveryOptions, currentIdx)
-    .then(function(selectedIdx) {
-        if (selectedIdx >= 0) {
-            purchase_type = deliveryOptions[selectedIdx];
-            updateParamSummary();
-            toast('配送方式已设置为: ' + deliveryOptions[selectedIdx]);
-        }
-    });
+    if (purchase_type === '到店取') {
+        purchase_type = '送到家';
+    } else {
+        purchase_type = '到店取';
+    }
+    w.delivery_type.setText(purchase_type);
+    if (purchase_type === '送到家') {
+        w.delivery_type.attr('bg', '#E83828'); // 红色
+    } else {
+        w.delivery_type.attr('bg', '#0f57f7'); // 蓝色
+    }
+    toast('配送方式已切换为: ' + purchase_type);
 });
+
+// 初始化时设置按钮颜色
+if (purchase_type === '送到家') {
+    w.delivery_type.attr('bg', '#E83828');
+} else {
+    w.delivery_type.attr('bg', '#0f57f7');
+}
 
 // 添加购买数量按钮点击事件
 w.purchase_count_btn.click(function () {
@@ -308,6 +320,18 @@ var settingsConfig = {
             console.error("[本地参数更新(优先本地)] 确认无误/就是这家等待时间:" + num);
         }
     },
+    '点击确定按钮后等待时间(ms)': {
+        type: 'input',
+        inputType: 'number',
+        value: () => special_confirm_delay.toString(),
+        setValue: (val) => {
+            var num = parseInt(val);
+            if (num >= 0) {
+                special_confirm_delay = num;
+            }
+            console.info("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num);
+        }
+    },
     '支付密码': {
         type: 'input',
         inputType: 'text',
@@ -319,63 +343,51 @@ var settingsConfig = {
             console.info("[参数更新] 支付密码");
         }
     },
-    '隐藏弹窗': {
+    '隐藏脚本': {
         type: 'action',
         description: '隐藏悬浮窗一段时间',
         action: function() {
-            w.main_window.attr('alpha', 0.0);
-            toast("隐藏弹窗");
+            w.main_window.attr('visibility', 'gone');
+            toast("隐藏脚本");
             setTimeout(function() {
-                w.main_window.attr('alpha', main_window_alpha);
+                w.main_window.attr('visibility', 'visible');
             }, hide_sleep_time * 60 * 1000);
         }
-    }
+    },
 };
 
 // 显示设置菜单（二级页面）
 function showSettingsMenu() {
     var items = Object.keys(settingsConfig);
-    var itemDisplays = items.map(item => {
-        var config = settingsConfig[item];
-        if (config.type === 'action') {
-            return item;
-        } else {
-            var currentValue = config.value();
-            return item;
-        }
-    });
-
-    dialogs.singleChoice('设置', itemDisplays, -1)
-    .then(function(itemIdx) {
-        if (itemIdx < 0) return;
-
-        var selectedItem = items[itemIdx];
-        var config = settingsConfig[selectedItem];
-
-        // 处理不同类型的设置项
-        if (config.type === 'choice') {
-            showChoiceSetting(selectedItem, config);
-        } else if (config.type === 'input') {
-            showInputSetting(selectedItem, config);
-        } else if (config.type === 'action') {
-            showActionSetting(selectedItem, config);
-        }
-    });
+    dialogs.select("请选择设置项", items)
+        .then(function(itemIdx) {
+            if (itemIdx < 0) return;
+            var selectedItem = items[itemIdx];
+            var config = settingsConfig[selectedItem];
+            // 处理不同类型的设置项
+            if (config.type === 'choice') {
+                showChoiceSetting(selectedItem, config);
+            } else if (config.type === 'input') {
+                showInputSetting(selectedItem, config);
+            } else if (config.type === 'action') {
+                showActionSetting(selectedItem, config);
+            }
+        });
 }
 
 // 处理选择类型设置（三级页面）
 function showChoiceSetting(itemName, config) {
     var currentIdx = config.options.indexOf(config.value());
     dialogs.singleChoice(itemName, config.options, currentIdx)
-    .then(function(selectedIdx) {
-        if (selectedIdx >= 0) {
-            config.setValue(config.options[selectedIdx]);
-            updateParamSummary();
-            toast(itemName + ' 已设置为: ' + config.options[selectedIdx]);
-        }
-        // 设置完成后返回设置菜单
-        showSettingsMenu();
-    });
+        .then(function(selectedIdx) {
+            if (selectedIdx >= 0) {
+                config.setValue(config.options[selectedIdx]);
+                updateParamSummary();
+                toast(itemName + ' 已设置为: ' + config.options[selectedIdx]);
+            }
+            // 设置完成后返回设置菜单
+            showSettingsMenu();
+        });
 }
 
 // 处理输入类型设置（三级页面）
@@ -1204,6 +1216,36 @@ var dc_streak = 0;
 
 var defaultInterval = 150;
 
+// 安全点击函数，带超时保护
+function safeClick(btn, timeoutMs) {
+    var finished = false;
+    var result = false;
+    var errMsg = null;
+    var thread = threads.start(function() {
+        try {
+            btn.click();
+            result = true;
+        } catch (e) {
+            errMsg = e.message;
+        }
+        finished = true;
+    });
+    var start = new Date().getTime();
+    while (!finished && (new Date().getTime() - start < timeoutMs)) {
+        sleep(50);
+    }
+    if (!finished) {
+        thread.interrupt();
+        console.error("[超时] confirm_btn.click() 超过 " + timeoutMs + "ms，强制跳过！");
+        return false;
+    }
+    if (errMsg) {
+        console.error("[异常] confirm_btn.click() 失败: " + errMsg);
+        return false;
+    }
+    return result;
+}
+
 while (true) {
     if (script_status == 0) {
         // Reset ALL state variables to ensure clean restart
@@ -1307,12 +1349,11 @@ while (true) {
                     try {
                         child = current_webview.child(i);
                     } catch (e) {
-                        console.warn("[异常] 获取 child(" + i + ") 失败: " + e.message);
+                        //console.warn("[异常] 获取 child(" + i + ") 失败: " + e.message);
                         continue;
                     }
                     if (!child) {
                         continue;
-                        console.error("444");
                     }
                     if (child.className && child.className() === "android.view.View") {
                         last_view = child;
@@ -1322,12 +1363,12 @@ while (true) {
                 }
                 if (!found) {
                     tryCount++;
-                    console.warn("[警告] 未找到 last_view，第" + tryCount + "次重试");
+                    //console.warn("[警告] 未找到 last_view，第" + tryCount + "次重试");
                     sleep(100); // 等待一会再重试，防止页面未加载完
                     try {
                         childCount = current_webview.childCount();
                     } catch (e) {
-                        console.error("[异常] 重试时获取 childCount 失败: " + e.message);
+                        //console.error("[异常] 重试时获取 childCount 失败: " + e.message);
                         break;
                     }
                 }
@@ -1355,12 +1396,39 @@ while (true) {
             // console.timeEnd("find_confirm_btn");
             if (confirm_btn) {
                 dc_streak = 0;
-                confirm_btn.click();
-                console.info("[点击] 确认信息并支付1");
-                if (debug_mode_conf) {
-                    console.error("clicked confirm_btn");
+                console.info("[准备点击] 确认信息并支付1，检测 confirm_btn 有效性...");
+                try {
+                    if (confirm_btn && typeof confirm_btn.click === 'function') {
+                        console.info("[点击前] confirm_btn: " + confirm_btn.toString());
+                        var beforeClickBounds = null;
+                        try {
+                            beforeClickBounds = confirm_btn.bounds();
+                            //console.info("[点击前] confirm_btn bounds: " + JSON.stringify(beforeClickBounds));
+                        } catch (e) {
+                            //console.warn("[点击前] 获取 confirm_btn bounds 失败: " + e.message);
+                        }
+                        var clickResult = safeClick(confirm_btn, 2000); // 2秒超时
+                        if (clickResult) {
+                           // console.info("[点击后] 已执行 confirm_btn.click() (safeClick)");
+                        } else {
+                           // console.warn("[点击后] confirm_btn.click() 未成功或超时 (safeClick)");
+                        }
+                        var afterClickBounds = null;
+                        try {
+                            afterClickBounds = confirm_btn.bounds();
+                           // console.info("[点击后] confirm_btn bounds: " + JSON.stringify(afterClickBounds));
+                        } catch (e) {
+                           // console.warn("[点击后] 获取 confirm_btn bounds 失败: " + e.message);
+                        }
+                    } else {
+                        //console.error("[异常] confirm_btn 无法点击，类型: " + typeof confirm_btn);
+                    }
+                } catch (e) {
+                    //console.error("[异常] confirm_btn.click() 失败: " + e.message);
                 }
-                // console.error("confirm_btn click");
+                if (debug_mode_conf) {
+                    //console.error("clicked confirm_btn");
+                }
                 sleep(extra_delay);
                 break;
             }
@@ -1542,14 +1610,14 @@ while (true) {
                             }
                         }
                     }
+                } else {
+                    var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                    if (!confirm_btn) {
+                        rebuy_flag = false;
+                    }
+                    sleep(150);
                 }
-            } else {
-                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                if (!confirm_btn) {
-                    rebuy_flag = false;
-                }
-                sleep(150);
-            }
+            } // 修复：补充缺失的大括号，闭合 case 'info_page'
             // Acknowledge page logic
             break;
         case "prepare_sale":
@@ -1991,7 +2059,7 @@ while (true) {
                         break;
                     }
 
-                    console.info("[注意] 库存刷新耗时: ", sleepTarget, "ms");
+                    console.info("[注意] 库存刷新耗时: ", sleepTarget + 50, "ms");
                     if (confirm_btn) {
                         break;
                     }
