@@ -78,9 +78,10 @@ var start_time = 0;
 console.error('目前的购买方案为: ', purchase_type);
 console.error('目前的抢购数量为: ', purchase_count);
 console.error('目前的抢购规格为: ', specs);
-console.error('库存刷新时间: ', refresh_delay);
-console.error('确认信息并支付点击后等待时间: ', ignore_ack_click_delay);
-console.error('就是这家/确认无误点击后等待时间: ', ignore_ack_click_confirm_delay);
+console.error('库存刷新时间: ', refresh_delay + "ms");
+console.error('确认信息并支付点击后等待时间: ', ignore_ack_click_delay + "ms");
+console.error('就是这家/确认无误点击后等待时间: ', ignore_ack_click_confirm_delay + "ms");
+console.error('确定按钮点击后等待时间: ', special_confirm_delay + "ms");
 //if (onFreeTrial) {
 //    console.error('目前为免费试用版, 功能受到限制，如果觉得好用请重新订阅后再次购买!');
 //    console.error('在试用期间, 刷新速度的配置选项将无效, 固定为2000ms(2秒)');
@@ -146,14 +147,20 @@ function updateStorage() {
     var s_ignore_ack_click_delay = storage.get("s_ignore_ack_click_delay");
     if (s_ignore_ack_click_delay !== null && s_ignore_ack_click_delay !== undefined && s_ignore_ack_click_delay !== '') {
         ignore_ack_click_delay = parseInt(s_ignore_ack_click_delay);
-        console.info("[本地读取] 确认支付等待时间: " + ignore_ack_click_delay + "ms");
+        console.info("[本地读取参数更] 确认信息并支付点击后等待时间: " + ignore_ack_click_delay + "ms");
     }
 
     // 就是这家/确认无误点击后等待时间
     var s_ignore_ack_click_confirm_delay = storage.get("s_ignore_ack_click_confirm_delay");
     if (s_ignore_ack_click_confirm_delay !== null && s_ignore_ack_click_confirm_delay !== undefined && s_ignore_ack_click_confirm_delay !== '') {
         ignore_ack_click_confirm_delay = parseInt(s_ignore_ack_click_confirm_delay);
-        console.info("[本地读取] 就是这家/确认无误等待时间: " + ignore_ack_click_confirm_delay + "ms");
+        console.info("[本地读取参数更新] 就是这家/确认无误点击后等待时间: " + ignore_ack_click_confirm_delay + "ms");
+    }
+    // 确定按钮后等待时间的本地读取
+    var s_special_confirm_delay = storage.get("s_special_confirm_delay");
+    if (s_special_confirm_delay !== null && s_special_confirm_delay !== undefined && s_special_confirm_delay !== '') {
+        special_confirm_delay = parseInt(s_special_confirm_delay);
+        console.info("[本地读取参数更新] 确定按钮后点击后等待时间: " + special_confirm_delay + "ms");
     }
 }
 
@@ -288,48 +295,61 @@ var settingsConfig = {
         value: () => '',
         setValue: (val) => {
             var num = parseInt(val);
-            if (num > 0) {
-                refresh_delay = num;
+            var min = 300; // 最小值限制
+            if (isNaN(num) || num < min) {
+                num = min;
+                toast('最低设置值为' + min + 'ms');
             }
-            console.info("[参数更新] 库存刷新间隔:" + val);
+            refresh_delay = num;
+            console.info("[参数更新] 库存刷新间隔:" + num + "ms");
         }
     },
-    '确认支付等待时间(ms)': {
+    '确认信息并支付点击后等待时间(ms)': {
         type: 'input',
         inputType: 'number',
         value: () => ignore_ack_click_delay.toString(),
         setValue: (val) => {
             var num = parseInt(val);
-            if (num >= 0) {
-                ignore_ack_click_delay = num;
-                storage.put('s_ignore_ack_click_delay', num);
+            var min = 100; // 最小值限制
+            if (isNaN(num) || num < min) {
+                num = min;
+                toast('最低设置值为' + min + 'ms');
             }
-            console.error("[本地参数更新(优先本地)] 确认支付等待时间:" + num);
+            ignore_ack_click_delay = num;
+            storage.put('s_ignore_ack_click_delay', num);
+            console.error("[本地参数更新(优先本地)] 确认支付等待时间:" + num + "ms");
         }
     },
-    '确认无误/就是这家等待时间(ms)': {
+    '确认无误/就是这家点击后等待时间(ms)': {
         type: 'input',
         inputType: 'number',
         value: () => ignore_ack_click_confirm_delay.toString(),
         setValue: (val) => {
             var num = parseInt(val);
-            if (num >= 0) {
-                ignore_ack_click_confirm_delay = num;
-                storage.put('s_ignore_ack_click_confirm_delay', num);
+            var min = 150; // 最小值限制
+            if (isNaN(num) || num < min) {
+                num = min;
+                toast('最低设置值为' + min + 'ms');
             }
-            console.error("[本地参数更新(优先本地)] 确认无误/就是这家等待时间:" + num);
+            ignore_ack_click_confirm_delay = num;
+            storage.put('s_ignore_ack_click_confirm_delay', num);
+            console.error("[本地参数更新(优先本地)] 确认无误/就是这家等待时间:" + num + "ms");
         }
     },
-    '点击确定按钮后等待时间(ms)': {
+    '点击确定按钮点击后等待时间(ms)': {
         type: 'input',
         inputType: 'number',
         value: () => special_confirm_delay.toString(),
         setValue: (val) => {
             var num = parseInt(val);
-            if (num >= 0) {
-                special_confirm_delay = num;
+            var min = 200; // 最小值限制
+            if (isNaN(num) || num < min) {
+                num = min;
+                toast('最低设置值为' + min + 'ms');
             }
-            console.info("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num);
+            special_confirm_delay = num;
+            storage.put('s_special_confirm_delay', num);
+            console.error("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num + "ms");
         }
     },
     '支付密码': {
@@ -348,7 +368,7 @@ var settingsConfig = {
         description: '隐藏悬浮窗一段时间',
         action: function() {
             w.main_window.attr('visibility', 'gone');
-            toast("隐藏脚本");
+            toast("隐藏脚本"+ hide_sleep_time * 60 * 1000 + "分钟");
             setTimeout(function() {
                 w.main_window.attr('visibility', 'visible');
             }, hide_sleep_time * 60 * 1000);
@@ -1216,7 +1236,10 @@ var dc_streak = 0;
 
 var defaultInterval = 150;
 
-// 安全点击函数，带超时保护
+// 新增：防止重复点击确认信息并支付
+var hasClickedConfirmAndPay = false;
+
+//安全点击函数，带超时保护
 function safeClick(btn, timeoutMs) {
     var finished = false;
     var result = false;
@@ -1225,6 +1248,7 @@ function safeClick(btn, timeoutMs) {
         try {
             btn.click();
             result = true;
+            console.error("[点击]确认信息并支付1");
         } catch (e) {
             errMsg = e.message;
         }
@@ -1257,12 +1281,12 @@ while (true) {
         last_confirm_time = 0;
         confirm_btn_retry_count = 0;
         refresh_attempt_count = 0; // 重置刷新尝试次数
-
-        sleep(100); // 使用快速模式停止延迟
+        hasClickedConfirmAndPay = false; // 新增：重置点击锁
+        sleep(5); // 使用快速模式停止延迟
         continue;
     }
     // log("===start===")
-    sleep(50); // 使用快速模式主循环延迟
+    sleep(5); // 使用快速模式主循环延迟
     // console.time("get_webview_parent_node");
     var webview_parent_node = get_webview_parent_node();
     if (!webview_parent_node) {
@@ -1396,38 +1420,24 @@ while (true) {
             // console.timeEnd("find_confirm_btn");
             if (confirm_btn) {
                 dc_streak = 0;
-                console.info("[准备点击] 确认信息并支付1，检测 confirm_btn 有效性...");
-                try {
-                    if (confirm_btn && typeof confirm_btn.click === 'function') {
-                        console.info("[点击前] confirm_btn: " + confirm_btn.toString());
-                        var beforeClickBounds = null;
-                        try {
-                            beforeClickBounds = confirm_btn.bounds();
-                            //console.info("[点击前] confirm_btn bounds: " + JSON.stringify(beforeClickBounds));
-                        } catch (e) {
-                            //console.warn("[点击前] 获取 confirm_btn bounds 失败: " + e.message);
+                // 新增：防止重复点击
+                if (!hasClickedConfirmAndPay) {
+                    try {
+                        if (confirm_btn && typeof confirm_btn.click === 'function') {
+                            var beforeClickBounds = null;
+                            try {
+                                beforeClickBounds = confirm_btn.bounds();
+                            } catch (e) {}
+                            var clickResult = safeClick(confirm_btn, 2000); // 2秒超时
+                            if (clickResult) {
+                                hasClickedConfirmAndPay = true;
+                            }
+                            var afterClickBounds = null;
+                            try {
+                                afterClickBounds = confirm_btn.bounds();
+                            } catch (e) {}
                         }
-                        var clickResult = safeClick(confirm_btn, 2000); // 2秒超时
-                        if (clickResult) {
-                           // console.info("[点击后] 已执行 confirm_btn.click() (safeClick)");
-                        } else {
-                           // console.warn("[点击后] confirm_btn.click() 未成功或超时 (safeClick)");
-                        }
-                        var afterClickBounds = null;
-                        try {
-                            afterClickBounds = confirm_btn.bounds();
-                           // console.info("[点击后] confirm_btn bounds: " + JSON.stringify(afterClickBounds));
-                        } catch (e) {
-                           // console.warn("[点击后] 获取 confirm_btn bounds 失败: " + e.message);
-                        }
-                    } else {
-                        //console.error("[异常] confirm_btn 无法点击，类型: " + typeof confirm_btn);
-                    }
-                } catch (e) {
-                    //console.error("[异常] confirm_btn.click() 失败: " + e.message);
-                }
-                if (debug_mode_conf) {
-                    //console.error("clicked confirm_btn");
+                    } catch (e) {}
                 }
                 sleep(extra_delay);
                 break;
@@ -2136,5 +2146,9 @@ while (true) {
         default:
             //log("Unknown status: ");
             break;
+    }
+    // 在页面状态切换时重置hasClickedConfirmAndPay
+    if (page_info.status !== "confirm_and_pay") {
+        hasClickedConfirmAndPay = false;
     }
 } 
