@@ -2151,4 +2151,4 @@ while (true) {
     if (page_info.status !== "confirm_and_pay") {
         hasClickedConfirmAndPay = false;
     }
-} 
+}
