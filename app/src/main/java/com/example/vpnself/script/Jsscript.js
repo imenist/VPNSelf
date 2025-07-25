@@ -1250,6 +1250,7 @@ function safeClick(btn, timeoutMs) {
             result = true;
             console.error("[点击]确认信息并支付1");
         } catch (e) {
+            console.error("[点击失败] 确认信息并支付1 异常:"+ e.message);
             errMsg = e.message;
         }
         finished = true;
@@ -1347,18 +1348,18 @@ while (true) {
             var ignore_next_purchase_page_flag = false;
             rebuy_flag = true;
             if (!current_webview) {
-                if (debug_mode_conf) {
-                    log("Cannot find current webview.");
-                }
+                log("Cannot find current webview.");
                 sleep(10);
                 break;
             }
+            log("confirm_and_pay view 更新");
 
             // console.time("find_last_view");
             var last_view = null;
             var childCount = 0;
             try {
                 childCount = current_webview.childCount();
+                log("当前页面childCount个数："+childCount);
             } catch (e) {
                 console.error("[异常] 获取 childCount 失败: " + e.message);
                 sleep(10); // 防止死循环
@@ -1392,7 +1393,7 @@ while (true) {
                     try {
                         childCount = current_webview.childCount();
                     } catch (e) {
-                        //console.error("[异常] 重试时获取 childCount 失败: " + e.message);
+                        console.error("[异常] 重试时获取 childCount 失败: " + e.message);
                         break;
                     }
                 }
@@ -1435,7 +1436,9 @@ while (true) {
                             var afterClickBounds = null;
                             try {
                                 afterClickBounds = confirm_btn.bounds();
-                            } catch (e) {}
+                            } catch (e) {
+
+                            }
                         }
                     } catch (e) {}
                 }
@@ -1458,6 +1461,8 @@ while (true) {
             }
             // console.timeEnd("find_double_confirm");
             if (double_confirm) {
+                console.info("页面结构找到 确认无误|就是这家1");
+                console.info("dc_streak:"+dc_streak);
                 if (dc_streak == 0) {
                     // console.error("double_confirm click");
                     last_double_confirm_time = new Date().getTime();
@@ -1472,6 +1477,7 @@ while (true) {
                     submit_flag = true;
                     dc_streak = 0;
                 } else {
+                    console.info("dc_streak++");
                     dc_streak++;
                     sleep(20);
                 }
@@ -1491,6 +1497,8 @@ while (true) {
                             dc_streak++;
                             sleep(ignore_ack_click_confirm_delay);
                             break;
+                    } else {
+                        console.error("[找到] 确认无误|就是这家2，dc_strak 不等于 0")
                     }
                 }
 
@@ -1503,9 +1511,11 @@ while (true) {
                         sleep(ignore_ack_click_delay);
                         submit_flag = false;
                         break;
+                } else {
+                    console.error("[不能找到] 确认信息并支付2")
                 }
             submit_flag = false;
-
+            console.error("submit_flag = FALSE,结束循环，dc_streak:"+dc_streak)
             break;
 
         case "info_page":
@@ -1621,12 +1631,15 @@ while (true) {
                         }
                     }
                 } else {
+                    console.info("未能找到 确定 按钮")
                     var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
                     if (!confirm_btn) {
                         rebuy_flag = false;
                     }
                     sleep(150);
                 }
+            } else {
+                console.info("rebuy_flag 为 true,不进入匹配 确定 按钮")
             } // 修复：补充缺失的大括号，闭合 case 'info_page'
             // Acknowledge page logic
             break;
