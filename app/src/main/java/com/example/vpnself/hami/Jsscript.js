@@ -31,6 +31,7 @@ const {
     timeout_sleep_wait_time_conf,
     special_confirm_delay_conf,
     hide_sleep_time_conf,
+    select_index_conf,
 } = hamibot.env;
 const { onFreeTrial } = hamibot.plan;
 
@@ -44,6 +45,7 @@ var purchase_type = delivery || "到店取";
 var purchase_count = parseInt(purchase_count_conf) || 1;
 var specs = specs_conf || "单个";
 var refresh_delay = parseInt(delay_conf) || 600;
+var select_index = parseInt(select_index_conf) || 1; // 选择索引配置，1代表第一个选项，2代表第二个选项，以此类推
 var extra_delay = parseInt(extra_delay_conf) || 0;
 var max_refresh_time = parseFloat(max_refresh_time_conf) || 0;
 var auto_click_notification = auto_click_notification_conf || false;
@@ -312,6 +314,17 @@ var settingsConfig = {
         setValue: (val) => {
             specs = val;
             console.info("[参数更新] 购买规格:" + val);
+        }
+    },
+    '特殊款选项': {
+        type: 'input',
+        inputType: 'text',
+        value: () => '',
+        setValue: (val) => {
+            if (val) {
+                select_index = val;
+            }
+            console.info("[参数更新] 特殊款选项"+ val);
         }
     },
     '库存刷新间隔(ms)': {
@@ -1401,7 +1414,7 @@ while (true) {
             // 特殊处理：当 childCount 为 17 时，尝试使用确认信息并支付按钮坐标点击
             if (childCount === 17 && cached_confirm_info_coords) {
                 try {
-//                    console.error("[坐标点击] 确认信息并支付" + cached_confirm_info_coords.x + cached_confirm_info_coords.y);
+                    console.error("[坐标点击] 确认信息并支付" + cached_confirm_info_coords.x + cached_confirm_info_coords.y);
                     click(cached_confirm_info_coords.x, cached_confirm_info_coords.y);
                     hasClickedConfirmAndPay = true;
                     sleep(ignore_ack_click_delay);
@@ -1416,10 +1429,14 @@ while (true) {
 
             var confirm_btn = null;
             var confirm_btn_found = false;
+            console.info("cached_confirm_info_coords:"+cached_confirm_info_coords);
+            console.info("hasClickedConfirmAndPay:"+hasClickedConfirmAndPay);
+            console.info("first_enter_confirm_and_buy:"+first_enter_confirm_and_buy);
 
             // 优先尝试使用缓存的确认信息按钮坐标点击
             if (cached_confirm_info_coords && !hasClickedConfirmAndPay && first_enter_confirm_and_buy) {
                 try {
+                    console.info("[坐标点击] 尝试使用缓存的确认信息按钮坐标: (" + cached_confirm_info_coords.x + ", " + cached_confirm_info_coords.y + ")");
                     click(cached_confirm_info_coords.x, cached_confirm_info_coords.y);
                     console.error("[点击] 确认信息并支付1");
                     hasClickedConfirmAndPay = true;
@@ -1427,7 +1444,7 @@ while (true) {
                     dc_streak = 0;
                     sleep(ignore_ack_click_delay);
                 } catch (e) {
-//                    console.error("[坐标点击失败] 缓存的坐标点击失败: " + e.message + "，回退到层级判断");
+                    console.error("[坐标点击失败] 缓存的坐标点击失败: " + e.message + "，回退到层级判断");
                     // 清除无效的坐标
                     storage.remove("confirm_info_btn_coords");
                     cached_confirm_info_coords = null; // 同时清除缓存
@@ -1438,9 +1455,9 @@ while (true) {
             var double_confirm_btn_found = false;
 
             // 优先尝试使用缓存的确认无误按钮坐标点击
-            if (cached_double_confirm_coords && dc_streak == 0  && first_enter_confirm_and_buy) {
+            if (cached_double_confirm_coords && dc_streak == 0  && first_enter_confirm_and_buy && confirm_btn_found) {
                 try {
-//                    console.info("[坐标点击] 尝试使用缓存的确认无误按钮坐标: (" + cached_double_confirm_coords.x + ", " + cached_double_confirm_coords.y + ")");
+                    console.info("[坐标点击] 尝试使用缓存的确认无误按钮坐标: (" + cached_double_confirm_coords.x + ", " + cached_double_confirm_coords.y + ")");
                     click(cached_double_confirm_coords.x, cached_double_confirm_coords.y);
                     console.error("[点击] 确认无误|就是这家1");
                     last_double_confirm_time = new Date().getTime();
@@ -1449,7 +1466,7 @@ while (true) {
                     double_confirm_btn_found = true;
                     sleep(ignore_ack_click_confirm_delay);
                 } catch (e) {
-//                    console.error("[坐标点击失败] 缓存的确认无误坐标点击失败: " + e.message + "，回退到层级判断");
+                    console.error("[坐标点击失败] 缓存的确认无误坐标点击失败: " + e.message + "，回退到层级判断");
                     // 清除无效的坐标
                     storage.remove("double_confirm_btn_coords");
                     cached_double_confirm_coords = null; // 同时清除缓存
@@ -1518,7 +1535,6 @@ while (true) {
                       } catch (e) {
 //                          console.warn("[坐标获取] 获取确认无误按钮坐标失败(备用): " + e.message);
                       }
-
                       last_double_confirm_time = new Date().getTime();
                       hidden_double_confirm.click();
 //                      console.error("[文本点击] 确认无误|就是这家 坐标后文本识别");
@@ -1966,36 +1982,190 @@ while (true) {
                 var purchase_elements = [];
                 var specs_elements = [];
 
-                for (var i = 0; i < allElements.length; i++) {
-                    var element = allElements[i];
+                // 方法1: 直接使用选择器查找，而不是遍历View元素
+                console.info("=== 尝试直接选择器查找方法 ===");
+                
+                // 查找所有TextView元素
+                var textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
+                console.info("找到TextView数量: " + textViews.length);
+                
+                for (var i = 0; i < textViews.length; i++) {
                     try {
-                        var elementText = element.text();
-                        if (elementText) {
-                            // 检查购买方式元素
-                            if (purchase_type != '来回刷' && (elementText.includes(purchase_type) || elementText.includes("送到家") || elementText.includes("到店取"))) {
+                        var tv = textViews[i];
+                        var tvText = tv.text();
+//                        console.info("TextView[" + (i+1) + "] 文本: '" + (tvText || "") + "'");
+                        
+                        if (tvText) {
+                            // 检查购买方式
+                            if (purchase_type != '来回刷' && (tvText.includes(purchase_type) || tvText.includes("送到家") || tvText.includes("到店取"))) {
                                 purchase_elements.push({
-                                    text: elementText,
-                                    element: element,
-                                    clickable: element.clickable()
+                                    text: tvText,
+                                    element: tv,
+                                    clickable: tv.clickable()
                                 });
                             }
-
-                            // 检查规格元素
-                            if (elementText.includes("单个") || elementText.includes("整盒") || elementText.includes("整端") || elementText.includes("盲盒")) {
+                            // 检查规格
+                            if (tvText.includes("单个") || tvText.includes("整盒") || tvText.includes("整端") || tvText.includes("盲盒")) {
                                 specs_elements.push({
-                                    text: elementText,
-                                    element: element,
-                                    clickable: element.clickable()
+                                    text: tvText,
+                                    element: tv,
+                                    clickable: tv.clickable()
                                 });
                             }
                         }
-                        console.info("element size:"+allElements.length+"text:"+element.text());
                     } catch (e) {
                         // 忽略错误
                     }
                 }
+                
+                // 查找所有Button元素
+                var buttons = current_webview.find(className("android.widget.Button").algorithm('DFS'));
+                console.info("找到Button数量: " + buttons.length);
+                
+                for (var i = 0; i < buttons.length; i++) {
+                    try {
+                        var btn = buttons[i];
+                        var btnText = btn.text();
+                        console.info("Button[" + (i+1) + "] 文本: '" + (btnText || "") + "'");
+                        
+                        if (btnText) {
+                            // 检查购买方式
+                            if (purchase_type != '来回刷' && (btnText.includes(purchase_type) || btnText.includes("送到家") || btnText.includes("到店取"))) {
+                                purchase_elements.push({
+                                    text: btnText,
+                                    element: btn,
+                                    clickable: btn.clickable()
+                                });
+                            }
+                            // 检查规格
+                            if (btnText.includes("单个") || btnText.includes("整盒") || btnText.includes("整端") || btnText.includes("盲盒")) {
+                                specs_elements.push({
+                                    text: btnText,
+                                    element: btn,
+                                    clickable: btn.clickable()
+                                });
+                            }
+                                                }
+                    } catch (e) {
+                        // 忽略错误
+                    }
+                }
+                
 
-                console.info("[并行选择] 扫描完成 - 购买方式元素: " + purchase_elements.length + " 个, 规格元素: " + specs_elements.length + " 个");
+                
+                var selectElements = []; // 存储"选择**"元素信息
+                var buyMethodIndex = -1; // "购买方式"的索引
+                var selectSpecIndex = -1; // "选择规格"的索引
+                var selectOptionsToClick = []; // 存储需要点击的选择项
+                
+                // 1. 找到所有"选择**"元素和关键元素的位置
+                for (var i = 0; i < textViews.length; i++) {
+                    try {
+                        var tv = textViews[i];
+                        var tvText = tv.text();
+                        
+                        if (tvText) {
+                            // 匹配"选择**"模式
+                            if (tvText.startsWith("选择")) {
+                                selectElements.push({
+                                    index: i,
+                                    text: tvText,
+                                    element: tv
+                                });
+//                                console.info("找到选择元素[" + i + "]: " + tvText);
+                            }
+                            
+                            // 找到"购买方式"
+                            if (tvText === "购买方式") {
+                                buyMethodIndex = i;
+//                                console.info("找到购买方式[" + i + "]: " + tvText);
+                            }
+                            
+                            // 找到"选择规格"
+                            if (tvText === "选择规格") {
+                                selectSpecIndex = i;
+//                                console.info("找到选择规格[" + i + "]: " + tvText);
+                            }
+                        }
+                    } catch (e) {
+                        // 忽略错误
+                    }
+                }
+                
+                // 2. 为每个"选择**"元素创建spec_select数组
+                for (var i = 0; i < selectElements.length; i++) {
+                    var selectElement = selectElements[i];
+                    var selectIndex = selectElement.index;
+                    var currentSelectNumber = i + 1; // 当前是第几个"选择**"区域
+//                    console.info("分析第" + currentSelectNumber + "个选择元素: " + selectElement.text + " (索引:" + selectIndex + ")");
+                    
+                    // 找到在当前"选择**"下面且最靠近的"购买方式"或"选择规格"
+                    var nearestEndIndex = -1;
+                    var endElementText = "";
+                    
+                    // 检查"购买方式"是否在下面且更近
+                    if (buyMethodIndex > selectIndex) {
+                        nearestEndIndex = buyMethodIndex;
+                        endElementText = "购买方式";
+                    }
+                    
+                    // 检查"选择规格"是否在下面且更近
+                    if (selectSpecIndex > selectIndex) {
+                        if (nearestEndIndex === -1 || selectSpecIndex < nearestEndIndex) {
+                            nearestEndIndex = selectSpecIndex;
+                            endElementText = "选择规格";
+                        }
+                    }
+                    
+                    if (nearestEndIndex !== -1) {
+//                        console.info("找到最近的结束元素: " + endElementText + " (索引:" + nearestEndIndex + ")");
+                        
+                        // 创建spec_select数组，只包含中间的选项元素（排除开始和结束元素）
+                        var spec_select = [];
+                        for (var j = selectIndex + 1; j < nearestEndIndex; j++) {
+                            try {
+                                var element = textViews[j];
+                                var elementText = element.text();
+                                if (elementText && elementText.trim().length > 0) {
+                                    spec_select.push({
+                                        index: j,
+                                        text: elementText,
+                                        element: element,
+                                        arrayIndex: spec_select.length + 1 // 从1开始的数组索引
+                                    });
+                                }
+                            } catch (e) {
+                                // 忽略错误
+                            }
+                        }
+                        
+//                        console.info("=== 第" + currentSelectNumber + "个选择区域: " + selectElement.text + " 的选项元素 ===");
+                        for (var k = 0; k < spec_select.length; k++) {
+                            console.info("  选项[" + spec_select[k].arrayIndex + "] " + spec_select[k].text + " (TextView索引:" + spec_select[k].index + ")");
+                        }
+//                        console.info("=== 共 " + spec_select.length + " 个选项 ===");
+                        
+                        // 记录需要点击的选择项，不立即点击
+                        if (select_index > 0 && select_index <= spec_select.length) {
+                            var targetOption = spec_select[select_index - 1]; // 数组从0开始，但配置从1开始
+                            selectOptionsToClick.push({
+                                selectArea: selectElement.text,
+                                selectAreaNumber: currentSelectNumber,
+                                optionText: targetOption.text,
+                                element: targetOption.element,
+                                optionIndex: select_index
+                            });
+//                            console.info("📋 记录待点击: 第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")中的第" + select_index + "个选项 - " + targetOption.text);
+                        } else if (select_index > 0) {
+//                            console.warn("配置的选项索引 " + select_index + " 超出范围，第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")只有 " + spec_select.length + " 个选项");
+                        }
+                        
+                    } else {
+//                        console.info("未找到在第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")下面的购买方式或选择规格");
+                    }
+                }
+                
+//                console.info("[并行选择] 扫描完成 - 购买方式元素: " + purchase_elements.length + " 个, 规格元素: " + specs_elements.length + " 个");
 
                 // 并行处理购买方式选择
                 if (purchase_type != '来回刷') {
@@ -2073,6 +2243,26 @@ while (true) {
 
                 // 并行执行点击操作
                 console.info("[并行选择] 开始执行点击操作...");
+
+                // 点击选择项
+//                console.info("需要点击的选择项数量: " + selectOptionsToClick.length);
+                for (var i = 0; i < selectOptionsToClick.length; i++) {
+                    var selectOption = selectOptionsToClick[i];
+                    console.info("[并行选择] 点击选择项: 第" + selectOption.selectAreaNumber + "个选择区域(" + selectOption.selectArea + ")中的第" + selectOption.optionIndex + "个选项 - " + selectOption.optionText);
+                    try {
+                        selectOption.element.click();
+//                        console.info("[并行选择] 选择项点击成功: " + selectOption.optionText);
+                    } catch (e) {
+                        console.error("[并行选择] 选择项点击失败: " + selectOption.optionText + ", 错误: " + e.message);
+                        try {
+                            var bounds = selectOption.element.bounds();
+                            click(bounds.centerX(), bounds.centerY());
+                            console.info("[并行选择] 选择项坐标点击成功: " + selectOption.optionText);
+                        } catch (e2) {
+//                            console.error("[并行选择] 选择项坐标点击也失败: " + selectOption.optionText + ", 错误: " + e2.message);
+                        }
+                    }
+                }
 
                 // 点击购买方式
                 if (purchase_type_btn && purchase_type != '来回刷') {

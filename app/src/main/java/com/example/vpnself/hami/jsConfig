@@ -1,11 +1,5 @@
 [
   {
-    "name": "script_start_immediately_conf",
-    "type": "checkbox",
-    "label": "脚本一键启动",
-    "help": "勾选后一键启动"
-  },
-  {
     "name": "delivery",
     "type": "radio",
     "label": "配送选项",
@@ -27,6 +21,18 @@
     "default": "单个"
   },
   {
+    "name": "select_index_conf",
+    "type": "textarea",
+    "label": "特殊款选项(测试)",
+    "help": "默认为第一个选择，写1为第一个选择，以此类推。"
+  },
+  {
+    "name": "purchase_count_conf",
+    "type": "textarea",
+    "label": "购买数量",
+    "help": "默认为1, 请根据需求设置, 兼容超出最大购买数量。"
+  },
+  {
     "name": "purchase_count_conf",
     "type": "textarea",
     "label": "购买数量",
@@ -37,6 +43,12 @@
     "type": "checkbox",
     "label": "强效库存刷新模式",
     "help": "有效优化库存刷新时效。"
+  },
+  {
+    "name": "script_start_immediately_conf",
+    "type": "checkbox",
+    "label": "脚本一键启动",
+    "help": "勾选后一键启动"
   },
   {
     "name": "delay_conf",
