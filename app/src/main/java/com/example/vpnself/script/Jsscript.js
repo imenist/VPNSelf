@@ -759,7 +759,7 @@ function get_current_webview_fast(current_node) {
 }
 
 function check_current_page_tree(header_text, current_webview) {
-    console.info("check_current_page_tree")
+//    console.info("check_current_page_tree")
     if (!current_webview) {
         return { header: header_text, status: "no_webview" };
     }
