@@ -1279,9 +1279,9 @@ function safeClick(btn, timeoutMs) {
         try {
             btn.click();
             result = true;
-            console.error("[点击]确认信息并支付1");
+            console.error("[点击] 确认信息并支付3");
         } catch (e) {
-            console.error("[点击失败] 确认信息并支付1 异常:"+ e.message);
+//            console.error("[点击失败] 确认信息并支付1 异常:"+ e.message);
             errMsg = e.message;
         }
         finished = true;
@@ -1421,7 +1421,7 @@ while (true) {
             if (cached_confirm_info_coords && !hasClickedConfirmAndPay && first_enter_confirm_and_buy) {
                 try {
                     click(cached_confirm_info_coords.x, cached_confirm_info_coords.y);
-                    console.error("[坐标点击] 确认信息并支付");
+                    console.error("[点击] 确认信息并支付1");
                     hasClickedConfirmAndPay = true;
                     confirm_btn_found = true;
                     dc_streak = 0;
@@ -1442,7 +1442,7 @@ while (true) {
                 try {
 //                    console.info("[坐标点击] 尝试使用缓存的确认无误按钮坐标: (" + cached_double_confirm_coords.x + ", " + cached_double_confirm_coords.y + ")");
                     click(cached_double_confirm_coords.x, cached_double_confirm_coords.y);
-                    console.error("[坐标点击] 确认无误|就是这家");
+                    console.error("[点击] 确认无误|就是这家1");
                     last_double_confirm_time = new Date().getTime();
                     submit_flag = true;
                     dc_streak++;
@@ -1631,14 +1631,14 @@ while (true) {
 
                     last_double_confirm_time = new Date().getTime();
                     double_confirm_btn.click();
-                    console.error("[点击] 确认无误|就是这家1");
+                    console.error("[点击] 确认无误|就是这家3");
                     submit_flag = true;
                     dc_streak++;
                     double_confirm_btn_found = true;
                     sleep(ignore_ack_click_confirm_delay);
                 } else if (dc_streak >= 5) {
                     double_confirm_btn.click();
-                    console.error("[点击] 确认无误|就是这家3");
+                    console.error("[点击] 确认无误|就是这家3.1");
                     submit_flag = true;
                     dc_streak = 0;
                     double_confirm_btn_found = true;
