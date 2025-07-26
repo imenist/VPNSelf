@@ -1,5 +1,11 @@
 [
   {
+    "name": "script_start_immediately_conf",
+    "type": "checkbox",
+    "label": "脚本一键启动",
+    "help": "勾选后一键启动"
+  },
+  {
     "name": "delivery",
     "type": "radio",
     "label": "配送选项",
@@ -31,12 +37,6 @@
     "type": "checkbox",
     "label": "强效库存刷新模式",
     "help": "有效优化库存刷新时效。"
-  },
-  {
-    "name": "script_start_immediately_conf",
-    "type": "checkbox",
-    "label": "脚本一键启动",
-    "help": "勾选后一键启动"
   },
   {
     "name": "delay_conf",
