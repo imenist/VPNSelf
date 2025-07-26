@@ -1968,7 +1968,7 @@ while (true) {
             dc_streak = 0;
             if (!rebuy_flag) {
                 // 优化的并行识别和点击逻辑
-                console.info("[并行选择] 开始同时识别购买方式和规格...");
+                console.info("[并行选择] 开始同时识别购买方式和规格和特殊款...");
 
                 // 并行查找购买方式和规格的相关元素
                 var purchase_type_btn = null;
@@ -1983,11 +1983,11 @@ while (true) {
                 var specs_elements = [];
 
                 // 方法1: 直接使用选择器查找，而不是遍历View元素
-                console.info("=== 尝试直接选择器查找方法 ===");
+//                console.info("=== 尝试直接选择器查找方法 ===");
                 
                 // 查找所有TextView元素
                 var textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
-                console.info("找到TextView数量: " + textViews.length);
+//                console.info("找到TextView数量: " + textViews.length);
                 
                 for (var i = 0; i < textViews.length; i++) {
                     try {
@@ -2141,7 +2141,7 @@ while (true) {
                         
 //                        console.info("=== 第" + currentSelectNumber + "个选择区域: " + selectElement.text + " 的选项元素 ===");
                         for (var k = 0; k < spec_select.length; k++) {
-                            console.info("  选项[" + spec_select[k].arrayIndex + "] " + spec_select[k].text + " (TextView索引:" + spec_select[k].index + ")");
+//                            console.info("  选项[" + spec_select[k].arrayIndex + "] " + spec_select[k].text + " (TextView索引:" + spec_select[k].index + ")");
                         }
 //                        console.info("=== 共 " + spec_select.length + " 个选项 ===");
                         
