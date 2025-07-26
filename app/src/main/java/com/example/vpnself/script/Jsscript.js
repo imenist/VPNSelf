@@ -162,6 +162,22 @@ function updateStorage() {
         special_confirm_delay = parseInt(s_special_confirm_delay);
         console.info("[本地读取参数更新] 确定按钮后点击后等待时间: " + special_confirm_delay + "ms");
     }
+    
+    // 检查并加载确认信息按钮坐标到全局变量
+    cached_confirm_info_coords = storage.get("confirm_info_btn_coords");
+    if (cached_confirm_info_coords) {
+        console.info('[坐标系统] 已加载确认信息按钮坐标: (' + cached_confirm_info_coords.x + ', ' + cached_confirm_info_coords.y + ')');
+    } else {
+        console.info('[坐标系统] 暂无存储的确认信息按钮坐标，首次识别时将自动存储');
+    }
+    
+    // 检查并加载确认无误按钮坐标到全局变量
+    cached_double_confirm_coords = storage.get("double_confirm_btn_coords");
+    if (cached_double_confirm_coords) {
+        console.info('[坐标系统] 已加载确认无误按钮坐标: (' + cached_double_confirm_coords.x + ', ' + cached_double_confirm_coords.y + ')');
+    } else {
+        console.info('[坐标系统] 暂无存储的确认无误按钮坐标，首次识别时将自动存储');
+    }
 }
 
 // 初始化时显示一次，延迟确保悬浮窗完全加载
@@ -310,11 +326,11 @@ var settingsConfig = {
         value: () => ignore_ack_click_delay.toString(),
         setValue: (val) => {
             var num = parseInt(val);
-            var min = 100; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
+//            var min = 100; // 最小值限制
+//            if (isNaN(num) || num < min) {
+//                num = min;
+//                toast('最低设置值为' + min + 'ms');
+//            }
             ignore_ack_click_delay = num;
             storage.put('s_ignore_ack_click_delay', num);
             console.error("[本地参数更新(优先本地)] 确认支付等待时间:" + num + "ms");
@@ -326,11 +342,11 @@ var settingsConfig = {
         value: () => ignore_ack_click_confirm_delay.toString(),
         setValue: (val) => {
             var num = parseInt(val);
-            var min = 150; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
+//            var min = 150; // 最小值限制
+//            if (isNaN(num) || num < min) {
+//                num = min;
+//                toast('最低设置值为' + min + 'ms');
+//            }
             ignore_ack_click_confirm_delay = num;
             storage.put('s_ignore_ack_click_confirm_delay', num);
             console.error("[本地参数更新(优先本地)] 确认无误/就是这家等待时间:" + num + "ms");
@@ -342,11 +358,11 @@ var settingsConfig = {
         value: () => special_confirm_delay.toString(),
         setValue: (val) => {
             var num = parseInt(val);
-            var min = 200; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
+//            var min = 200; // 最小值限制
+//            if (isNaN(num) || num < min) {
+//                num = min;
+//                toast('最低设置值为' + min + 'ms');
+//            }
             special_confirm_delay = num;
             storage.put('s_special_confirm_delay', num);
             console.error("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num + "ms");
@@ -734,6 +750,7 @@ function get_current_webview_fast(current_node) {
 }
 
 function check_current_page_tree(header_text, current_webview) {
+    console.info("check_current_page_tree")
     if (!current_webview) {
         return { header: header_text, status: "no_webview" };
     }
@@ -1231,6 +1248,7 @@ var rebuy_flag = false;
 var submit_flag = false;
 var confirm_btn_retry_count = 0;
 var ignore_next_purchase_page_flag = false;
+var first_enter_confirm_and_buy = true;
 
 var dc_streak = 0;
 
@@ -1238,6 +1256,10 @@ var defaultInterval = 150;
 
 // 新增：防止重复点击确认信息并支付
 var hasClickedConfirmAndPay = false;
+
+// 全局存储确认按钮坐标
+var cached_confirm_info_coords = null;
+var cached_double_confirm_coords = null;
 
 //安全点击函数，带超时保护
 function safeClick(btn, timeoutMs) {
@@ -1283,6 +1305,9 @@ while (true) {
         confirm_btn_retry_count = 0;
         refresh_attempt_count = 0; // 重置刷新尝试次数
         hasClickedConfirmAndPay = false; // 新增：重置点击锁
+        // 注意：不重置坐标存储，但重新加载缓存以确保一致性
+        cached_confirm_info_coords = storage.get("confirm_info_btn_coords");
+        cached_double_confirm_coords = storage.get("double_confirm_btn_coords");
         sleep(5); // 使用快速模式停止延迟
         continue;
     }
@@ -1352,54 +1377,107 @@ while (true) {
                 sleep(10);
                 break;
             }
-            log("confirm_and_pay view 更新");
 
             // console.time("find_last_view");
             var last_view = null;
             var childCount = 0;
             try {
                 childCount = current_webview.childCount();
-                log("当前页面childCount个数："+childCount);
+//                log("当前页面childCount个数："+childCount);
             } catch (e) {
-                console.error("[异常] 获取 childCount 失败: " + e.message);
                 sleep(10); // 防止死循环
                 break;
             }
-            var found = false;
-            var maxTries = 3;
-            var tryCount = 0;
-            while (!found && tryCount < maxTries) {
-                for (var i = childCount - 1; i >= 0; i--) {
-                    var child = null;
-                    try {
-                        child = current_webview.child(i);
-                    } catch (e) {
-                        //console.warn("[异常] 获取 child(" + i + ") 失败: " + e.message);
-                        continue;
-                    }
-                    if (!child) {
-                        continue;
-                    }
-                    if (child.className && child.className() === "android.view.View") {
-                        last_view = child;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    tryCount++;
-                    //console.warn("[警告] 未找到 last_view，第" + tryCount + "次重试");
-                    sleep(100); // 等待一会再重试，防止页面未加载完
-                    try {
-                        childCount = current_webview.childCount();
-                    } catch (e) {
-                        console.error("[异常] 重试时获取 childCount 失败: " + e.message);
-                        break;
-                    }
+            
+            // 特殊处理：当 childCount 为 17 时，尝试使用确认信息并支付按钮坐标点击
+            if (childCount === 17 && cached_confirm_info_coords) {
+                try {
+//                    console.error("[坐标点击] 确认信息并支付" + cached_confirm_info_coords.x + cached_confirm_info_coords.y);
+                    click(cached_confirm_info_coords.x, cached_confirm_info_coords.y);
+                    hasClickedConfirmAndPay = true;
+                    sleep(ignore_ack_click_delay);
+                    break;
+                } catch (e) {
+//                    console.error("[坐标点击失败] 确认信息并支付按钮坐标点击失败: " + e.message);
+                    // 清除无效的坐标
+                    storage.remove("confirm_info_btn_coords");
+                    cached_confirm_info_coords = null;
                 }
             }
+
+            var confirm_btn = null;
+            var confirm_btn_found = false;
+
+            // 优先尝试使用缓存的确认信息按钮坐标点击
+            if (cached_confirm_info_coords && !hasClickedConfirmAndPay && first_enter_confirm_and_buy) {
+                try {
+                    click(cached_confirm_info_coords.x, cached_confirm_info_coords.y);
+                    console.error("[坐标点击] 确认信息并支付");
+                    hasClickedConfirmAndPay = true;
+                    confirm_btn_found = true;
+                    dc_streak = 0;
+                    sleep(ignore_ack_click_delay);
+                } catch (e) {
+//                    console.error("[坐标点击失败] 缓存的坐标点击失败: " + e.message + "，回退到层级判断");
+                    // 清除无效的坐标
+                    storage.remove("confirm_info_btn_coords");
+                    cached_confirm_info_coords = null; // 同时清除缓存
+                }
+            }
+
+            var double_confirm_btn = null;
+            var double_confirm_btn_found = false;
+
+            // 优先尝试使用缓存的确认无误按钮坐标点击
+            if (cached_double_confirm_coords && dc_streak == 0  && first_enter_confirm_and_buy) {
+                try {
+//                    console.info("[坐标点击] 尝试使用缓存的确认无误按钮坐标: (" + cached_double_confirm_coords.x + ", " + cached_double_confirm_coords.y + ")");
+                    click(cached_double_confirm_coords.x, cached_double_confirm_coords.y);
+                    console.error("[坐标点击] 确认无误|就是这家");
+                    last_double_confirm_time = new Date().getTime();
+                    submit_flag = true;
+                    dc_streak++;
+                    double_confirm_btn_found = true;
+                    sleep(ignore_ack_click_confirm_delay);
+                } catch (e) {
+//                    console.error("[坐标点击失败] 缓存的确认无误坐标点击失败: " + e.message + "，回退到层级判断");
+                    // 清除无效的坐标
+                    storage.remove("double_confirm_btn_coords");
+                    cached_double_confirm_coords = null; // 同时清除缓存
+                }
+            }
+
+
+
+            // console.time("find_last_view");
+            var last_view = null;
+            var childCount = current_webview.childCount();
+            for (var i = childCount - 1; i >= 0; i--) {
+                try {
+                    var child = current_webview.child(i);
+                } catch (e) {
+                    break;
+                }
+                if (!child) {
+                    break;
+                }
+                if (child.className() === "android.view.View") {
+                    last_view = child;
+                    break;
+                }
+            }
+            // console.timeEnd("find_last_view");
+
             if (!last_view) {
-                console.error("[错误] 多次重试后仍未找到 last_view，跳过本轮");
+                if (debug_mode_conf) {
+                    log("Cannot find last view.");
+                }
+                sleep(30);
+                break;
+            }
+
+            if (!last_view) {
+//                console.error("[错误] 多次重试后仍未找到 last_view，跳过本轮");
                 sleep(200); // 防止空转
                 break;
             }
@@ -1414,82 +1492,180 @@ while (true) {
             }
 
             // console.time("find_confirm_btn");
-            var confirm_btn = null;
-            if (last_view.childCount() == 4) {
-                var confirm_btn = last_view.child(3);
-            }
-            // console.timeEnd("find_confirm_btn");
-            if (confirm_btn) {
-                dc_streak = 0;
-                // 新增：防止重复点击
-                if (!hasClickedConfirmAndPay) {
+            if (first_enter_confirm_and_buy) {
+                var hidden_double_confirm = current_webview.findOne(textMatches(/(确认无误|就是这家)/).algorithm('DFS'));
+                if (hidden_double_confirm) {
                     try {
-                        if (confirm_btn && typeof confirm_btn.click === 'function') {
-                            var beforeClickBounds = null;
-                            try {
-                                beforeClickBounds = confirm_btn.bounds();
-                            } catch (e) {}
-                            var clickResult = safeClick(confirm_btn, 2000); // 2秒超时
-                            if (clickResult) {
-                                hasClickedConfirmAndPay = true;
-                            }
-                            var afterClickBounds = null;
-                            try {
-                                afterClickBounds = confirm_btn.bounds();
-                            } catch (e) {
+                          var hidden_double_confirm_bounds = hidden_double_confirm.bounds();
+                          if (hidden_double_confirm_bounds && !cached_double_confirm_coords) {
+                              var double_confirm_coords = {
+                                  x: hidden_double_confirm_bounds.centerX(),
+                                  y: hidden_double_confirm_bounds.centerY()
+                              };
+                              storage.put("double_confirm_btn_coords", double_confirm_coords);
+                              cached_double_confirm_coords = double_confirm_coords;
+//                              console.info("[坐标存储] 确认无误按钮坐标已存储并缓存(备用): (" + double_confirm_coords.x + ", " + double_confirm_coords.y + ")");
+                          }
+                      } catch (e) {
+//                          console.warn("[坐标获取] 获取确认无误按钮坐标失败(备用): " + e.message);
+                      }
 
-                            }
-                        }
-                    } catch (e) {}
+                      last_double_confirm_time = new Date().getTime();
+                      hidden_double_confirm.click();
+//                      console.error("[文本点击] 确认无误|就是这家 坐标后文本识别");
+                      submit_flag = true;
+                      dc_streak++;
+                      first_enter_confirm_and_buy = false;
+                      sleep(ignore_ack_click_confirm_delay);
+                      break;
+                } else {
+                    first_enter_confirm_and_buy = false;
+//                    console.error("确认无误|就是这家 文本无法识别 ");
+                    break;
                 }
-                sleep(extra_delay);
-                break;
+
             }
+
+
+            // 如果坐标点击失败或没有存储坐标，使用原来的层级判断
+            if (!confirm_btn_found) {
+                if (last_view.childCount() == 4) {
+                    confirm_btn = last_view.child(3);
+                }
+
+                if (confirm_btn) {
+                    dc_streak = 0;
+                    // 新增：防止重复点击
+                    if (!hasClickedConfirmAndPay) {
+                        try {
+                            if (confirm_btn && typeof confirm_btn.click === 'function') {
+                                var beforeClickBounds = null;
+                                try {
+                                    beforeClickBounds = confirm_btn.bounds();
+                                    // 存储确认信息按钮坐标到storage和缓存
+                                    if (beforeClickBounds && !cached_confirm_info_coords) {
+                                        var confirm_info_coords = {
+                                            x: beforeClickBounds.centerX(),
+                                            y: beforeClickBounds.centerY()
+                                        };
+                                        storage.put("confirm_info_btn_coords", confirm_info_coords);
+                                        cached_confirm_info_coords = confirm_info_coords; // 同时更新缓存
+//                                        console.info("[坐标存储] 确认信息按钮坐标已存储并缓存: (" + confirm_info_coords.x + ", " + confirm_info_coords.y + ")");
+                                    }
+                                } catch (e) {
+//                                    console.warn("[坐标获取] 获取确认按钮坐标失败: " + e.message);
+                                }
+                                var clickResult = safeClick(confirm_btn, 2000); // 2秒超时
+                                if (clickResult) {
+                                    hasClickedConfirmAndPay = true;
+                                }
+                                var afterClickBounds = null;
+                                try {
+                                    afterClickBounds = confirm_btn.bounds();
+                                } catch (e) {
+
+                                }
+                            }
+                        } catch (e) {
+//                            console.error("[层级点击失败] " + e.message);
+                        }
+                    }
+                    confirm_btn_found = true;
+                }
+            }
+
+            // console.timeEnd("find_confirm_btn");
+//            if (confirm_btn_found) {
+//                sleep(extra_delay);
+//                log("confirm_btn_found = true sleep"+extra_delay+"break;");
+//                break;
+//            }
 
             // console.time("find_double_confirm");
-            var double_confirm = null;
-            if (last_view.childCount() == 2) {
+
+
+            // 如果坐标点击失败或没有存储坐标，使用原来的层级判断
+            if (last_view.childCount() == 2 && dc_streak == 0) {
                 var second_child = last_view.child(1);
                 if (second_child && second_child.className() === "android.view.View") {
                     if (second_child.childCount() == 1) {
                         var inner_view = second_child.child(0);
                         if (inner_view && inner_view.className() === "android.view.View") {
-                            double_confirm = inner_view.child(inner_view.childCount() - 1);
+                            double_confirm_btn = inner_view.child(inner_view.childCount() - 1);
                         }
                     }
                 }
             }
             // console.timeEnd("find_double_confirm");
-            if (double_confirm) {
-                console.info("页面结构找到 确认无误|就是这家1");
-                console.info("dc_streak:"+dc_streak);
+            if (double_confirm_btn) {
+//                console.info("页面结构找到 确认无误|就是这家1");
                 if (dc_streak == 0) {
-                    // console.error("double_confirm click");
+                    // 存储确认无误按钮坐标
+                    if (!cached_double_confirm_coords) {
+                         try {
+                             var double_confirm_bounds = double_confirm_btn.bounds();
+                             if (double_confirm_bounds) {
+                                 var double_confirm_coords = {
+                                     x: double_confirm_bounds.centerX(),
+                                     y: double_confirm_bounds.centerY()
+                                 };
+                                 storage.put("double_confirm_btn_coords", double_confirm_coords);
+                                 cached_double_confirm_coords = double_confirm_coords;
+//                                 console.info("[坐标存储] 确认无误按钮坐标已存储并缓存: (" + double_confirm_coords.x + ", " + double_confirm_coords.y + ")");
+                             }
+                         } catch (e) {
+//                             console.warn("[坐标获取] 获取确认无误按钮坐标失败: " + e.message);
+                         }
+
+                    }
+
+
                     last_double_confirm_time = new Date().getTime();
-                    double_confirm.click();
+                    double_confirm_btn.click();
                     console.error("[点击] 确认无误|就是这家1");
                     submit_flag = true;
                     dc_streak++;
+                    double_confirm_btn_found = true;
                     sleep(ignore_ack_click_confirm_delay);
-                } else if (dc_streak >= 10) {
-                    double_confirm.click();
+                } else if (dc_streak >= 5) {
+                    double_confirm_btn.click();
                     console.error("[点击] 确认无误|就是这家3");
                     submit_flag = true;
                     dc_streak = 0;
+                    double_confirm_btn_found = true;
                 } else {
                     console.info("dc_streak++");
                     dc_streak++;
+                    double_confirm_btn_found = true;
                     sleep(20);
                 }
-                break;
             }
 
+            // 统一的 break 逻辑
+            if (double_confirm_btn_found) {
+                break;
+            }
 
 
             // 处理"确认无误|就是这家"按钮
             var hidden_double_confirm = current_webview.findOne(textMatches(/(确认无误|就是这家)/).algorithm('DFS'));
                 if (hidden_double_confirm) {
-                    if (dc_streak == 0) {
+                    if (dc_streak == 0 && cached_double_confirm_coords != null) {
+                            // 存储确认无误按钮坐标（备用方法）
+                            try {
+                                var hidden_double_confirm_bounds = hidden_double_confirm.bounds();
+                                if (hidden_double_confirm_bounds && !cached_double_confirm_coords) {
+                                    var double_confirm_coords = {
+                                        x: hidden_double_confirm_bounds.centerX(),
+                                        y: hidden_double_confirm_bounds.centerY()
+                                    };
+                                    storage.put("double_confirm_btn_coords", double_confirm_coords);
+                                    cached_double_confirm_coords = double_confirm_coords;
+                                }
+                            } catch (e) {
+//                                console.warn("[坐标获取] 获取确认无误按钮坐标失败(备用): " + e.message);
+                            }
+
                             last_double_confirm_time = new Date().getTime();
                             hidden_double_confirm.click();
                             console.error("[点击] 确认无误|就是这家2")
@@ -1498,7 +1674,7 @@ while (true) {
                             sleep(ignore_ack_click_confirm_delay);
                             break;
                     } else {
-                        console.error("[找到] 确认无误|就是这家2，dc_strak 不等于 0")
+//                        console.error("[找到] 确认无误|就是这家2，dc_strak 不等于 0");
                     }
                 }
 
@@ -1512,10 +1688,10 @@ while (true) {
                         submit_flag = false;
                         break;
                 } else {
-                    console.error("[不能找到] 确认信息并支付2")
+//                    console.error("[不能找到] 确认信息并支付2")
                 }
             submit_flag = false;
-            console.error("submit_flag = FALSE,结束循环，dc_streak:"+dc_streak)
+//            console.error("submit_flag = FALSE,结束循环，dc_streak:"+dc_streak)
             break;
 
         case "info_page":
@@ -2108,7 +2284,7 @@ while (true) {
                     if (elapsed >= special_confirm_delay) {
                         console.warn("[操作] 找到确认按钮，点击");
                         confirm_btn.click();
-
+                        first_enter_confirm_and_buy = true;
                         rebuy_flag = true;
                         ignore_next_purchase_page_flag = true;
                     } else {
