@@ -33,6 +33,12 @@
     "help": "有效优化库存刷新时效。"
   },
   {
+    "name": "script_start_immediately_conf",
+    "type": "checkbox",
+    "label": "脚本一键启动",
+    "help": "勾选后一键启动"
+  },
+  {
     "name": "delay_conf",
     "type": "textarea",
     "label": "库存刷新间隔时间 (毫秒)",

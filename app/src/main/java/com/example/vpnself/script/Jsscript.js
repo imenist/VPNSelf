@@ -24,6 +24,7 @@ const {
     ignore_ack_click_confirm_delay_conf,
     sku_result_toast_conf,
     rage_stock_refresh_conf,
+    script_start_immediately_conf,
     vibrate_time_conf,
     password_or_vibrate_conf,
     password_setting_conf,
@@ -143,6 +144,14 @@ function updateParamSummary() {
 }
 
 function updateStorage() {
+    if (script_start_immediately_conf) {
+        // 使用ui.post确保UI操作在UI线程中执行
+        ui.post(() => {
+            start();
+            console.error("[自动启动] 脚本已自动启动");
+        });
+        return;
+    }
     // 确认信息并支付点击后等待时间
     var s_ignore_ack_click_delay = storage.get("s_ignore_ack_click_delay");
     if (s_ignore_ack_click_delay !== null && s_ignore_ack_click_delay !== undefined && s_ignore_ack_click_delay !== '') {
