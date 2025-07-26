@@ -35,7 +35,7 @@ const {
 const { onFreeTrial } = hamibot.plan;
 
 if (!hide_console_conf) {
-    console.show()
+    console.show();
 }
 var script_status = 0;
 // VARS
@@ -59,8 +59,8 @@ var password_or_vibrate = password_or_vibrate_conf || "震动(不设置密码)";
 var password_setting = parseInt(password_setting_conf) || 123456;
 var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 0;
 var special_confirm_delay = parseInt(special_confirm_delay_conf) || 400;
-var ignore_ack_conf = true
-var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 10
+var ignore_ack_conf = true;
+var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 10;
 
 // 快速模式配置 - 减少各种延迟时间
 var fast_mode = true; // 默认启用快速模式
@@ -175,17 +175,17 @@ function updateStorage() {
     // 检查并加载确认信息按钮坐标到全局变量
     cached_confirm_info_coords = storage.get("confirm_info_btn_coords");
     if (cached_confirm_info_coords) {
-        console.info('[坐标系统] 已加载确认信息按钮坐标: (' + cached_confirm_info_coords.x + ', ' + cached_confirm_info_coords.y + ')');
+//        console.info('[坐标系统] 已加载确认信息按钮坐标: (' + cached_confirm_info_coords.x + ', ' + cached_confirm_info_coords.y + ')');
     } else {
-        console.info('[坐标系统] 暂无存储的确认信息按钮坐标，首次识别时将自动存储');
+//        console.info('[坐标系统] 暂无存储的确认信息按钮坐标，首次识别时将自动存储');
     }
     
     // 检查并加载确认无误按钮坐标到全局变量
     cached_double_confirm_coords = storage.get("double_confirm_btn_coords");
     if (cached_double_confirm_coords) {
-        console.info('[坐标系统] 已加载确认无误按钮坐标: (' + cached_double_confirm_coords.x + ', ' + cached_double_confirm_coords.y + ')');
+//        console.info('[坐标系统] 已加载确认无误按钮坐标: (' + cached_double_confirm_coords.x + ', ' + cached_double_confirm_coords.y + ')');
     } else {
-        console.info('[坐标系统] 暂无存储的确认无误按钮坐标，首次识别时将自动存储');
+//        console.info('[坐标系统] 暂无存储的确认无误按钮坐标，首次识别时将自动存储');
     }
 }
 
@@ -948,8 +948,8 @@ function click_plus_btn(current_webview) {
 
 function satisfyPurchaseCount(current_webview, target) {
     var number_text = current_webview.findOne(className("android.widget.TextView").text("数量").algorithm('DFS'));
-    var idx_num_text = number_text.indexInParent()
-    var parent_view = number_text.parent()
+    var idx_num_text = number_text.indexInParent();
+    var parent_view = number_text.parent();
     var minus_btn = parent_view.child(idx_num_text + 1);
     var number_count_text = parent_view.child(idx_num_text + 2);
     var plus_btn = parent_view.child(idx_num_text + 3);
@@ -1281,7 +1281,7 @@ function safeClick(btn, timeoutMs) {
             result = true;
             console.error("[点击] 确认信息并支付3");
         } catch (e) {
-//            console.error("[点击失败] 确认信息并支付1 异常:"+ e.message);
+//            console.error("[点击失败] 确认信息并支付3 异常:"+ e.message);
             errMsg = e.message;
         }
         finished = true;
@@ -1677,7 +1677,7 @@ while (true) {
 
                             last_double_confirm_time = new Date().getTime();
                             hidden_double_confirm.click();
-                            console.error("[点击] 确认无误|就是这家2")
+                            console.error("[点击] 确认无误|就是这家2");
                             submit_flag = true;
                             dc_streak++;
                             sleep(ignore_ack_click_confirm_delay);
@@ -1692,7 +1692,7 @@ while (true) {
                 if (hidden_confirm_btn) {
                         dc_streak = 0;
                         hidden_confirm_btn.click();
-                        console.info("[点击] 确认信息并支付2")
+                        console.info("[点击] 确认信息并支付2");
                         sleep(ignore_ack_click_delay);
                         submit_flag = false;
                         break;
@@ -1989,6 +1989,7 @@ while (true) {
                                 });
                             }
                         }
+                        console.info("element size:"+allElements.length+"text:"+element.text());
                     } catch (e) {
                         // 忽略错误
                     }
