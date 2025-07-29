@@ -1283,37 +1283,7 @@ var hasClickedConfirmAndPay = false;
 var cached_confirm_info_coords = null;
 var cached_double_confirm_coords = null;
 
-//安全点击函数，带超时保护
-function safeClick(btn, timeoutMs) {
-    var finished = false;
-    var result = false;
-    var errMsg = null;
-    var thread = threads.start(function() {
-        try {
-            btn.click();
-            result = true;
-            console.error("[点击] 确认信息并支付3");
-        } catch (e) {
-//            console.error("[点击失败] 确认信息并支付3 异常:"+ e.message);
-            errMsg = e.message;
-        }
-        finished = true;
-    });
-    var start = new Date().getTime();
-    while (!finished && (new Date().getTime() - start < timeoutMs)) {
-        sleep(50);
-    }
-    if (!finished) {
-        thread.interrupt();
-        console.error("[超时] confirm_btn.click() 超过 " + timeoutMs + "ms，强制跳过！");
-        return false;
-    }
-    if (errMsg) {
-        console.error("[异常] confirm_btn.click() 失败: " + errMsg);
-        return false;
-    }
-    return result;
-}
+
 
 while (true) {
     if (script_status == 0) {
@@ -1429,9 +1399,6 @@ while (true) {
 
             var confirm_btn = null;
             var confirm_btn_found = false;
-            console.info("cached_confirm_info_coords:"+cached_confirm_info_coords);
-            console.info("hasClickedConfirmAndPay:"+hasClickedConfirmAndPay);
-            console.info("first_enter_confirm_and_buy:"+first_enter_confirm_and_buy);
 
             // 优先尝试使用缓存的确认信息按钮坐标点击
             if (cached_confirm_info_coords && !hasClickedConfirmAndPay && first_enter_confirm_and_buy) {
@@ -1580,10 +1547,9 @@ while (true) {
                                 } catch (e) {
 //                                    console.warn("[坐标获取] 获取确认按钮坐标失败: " + e.message);
                                 }
-                                var clickResult = safeClick(confirm_btn, 2000); // 2秒超时
-                                if (clickResult) {
-                                    hasClickedConfirmAndPay = true;
-                                }
+                                confirm_btn.click();
+                                console.error("[点击] 确认信息并支付");
+                                hasClickedConfirmAndPay = true;
                                 var afterClickBounds = null;
                                 try {
                                     afterClickBounds = confirm_btn.bounds();

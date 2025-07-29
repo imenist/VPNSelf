@@ -448,7 +448,7 @@ function get_current_webview_fast(current_node) {
 
 
 function check_current_page_tree(header_text, current_webview) {
-
+    console.info("check_current_page_tree");
     if (!current_webview) {
         return { header: header_text, status: "no_webview" };
     }
@@ -614,6 +614,7 @@ while (true) {
 
     switch (page_info.status) {
         case "confirm_and_pay":
+        console.info("enter confirm_and_pay");
         var ignore_next_purchase_page_flag = false;
         rebuy_flag = true;
         if (!current_webview) {
@@ -969,12 +970,14 @@ while (true) {
                 if (elapsed >= special_confirm_delay) {
                     console.warn("[等待] 确认按钮点击时间已超过", special_confirm_delay, "ms，点击确认");
                     confirm_btn.click();
+                    console.info("点击 确认按钮3");
                     rebuy_flag = true;
                     ignore_next_purchase_page_flag = true;
                 } else {
                     console.warn("[等待] 为防止反复被打回， 等待", special_confirm_delay - elapsed, "ms后点击确认");
                     sleep(special_confirm_delay - elapsed);
                     confirm_btn.click();
+                    console.info("点击 确认按钮4");
                     rebuy_flag = true;
                     ignore_next_purchase_page_flag = true;
                 }
@@ -984,6 +987,7 @@ while (true) {
                 if (elapsed >= 450) {
                     last_confirm_time = now;
                     confirm_btn.click();
+                    console.info("点击 确认按钮5");
                     rebuy_flag = true;
                     ignore_next_purchase_page_flag = true;
                 }
@@ -1007,6 +1011,7 @@ while (true) {
         var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
         if (confirm_btn) {
             confirm_btn.click();
+            console.info("点击 确认按钮6");
         }
         sleep(200);
         break;
