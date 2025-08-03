@@ -1567,7 +1567,6 @@ while (true) {
                     break;
                 }
                 if (child.className() === "android.view.View") {
-
                     last_view = child;
                     break;
                 }
