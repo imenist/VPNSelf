@@ -26,6 +26,7 @@ const {
     sku_result_toast_conf,
     rage_stock_refresh_conf,
     script_start_immediately_conf,
+    script_pause_when_success_conf,
     vibrate_time_conf,
     password_or_vibrate_conf,
     password_setting_conf,
@@ -36,7 +37,10 @@ const {
 } = hamibot.env;
 const { onFreeTrial } = hamibot.plan;
 
-if (!hide_console_conf) {
+// 默认隐藏控制台，除非明确设置为显示
+if (hide_console_conf) {
+    console.hide();
+} else if(!hide_console_conf){
     console.show();
 }
 var script_status = 0;
@@ -57,13 +61,13 @@ var ignore_ack_click_delay = parseInt(ignore_ack_click_delay_conf) || 200;
 var ignore_ack_click_confirm_delay = parseInt(ignore_ack_click_confirm_delay_conf) || 800;
 var last_double_confirm_time = 0;
 var last_confirm_time = 0;
-var vibrate_time = parseInt(vibrate_time_conf) || 3000;
+var vibrate_time = (vibrate_time_conf !== null && vibrate_time_conf !== undefined && vibrate_time_conf !== '' && !isNaN(parseInt(vibrate_time_conf))) ? parseInt(vibrate_time_conf) : 3000;
 var password_or_vibrate = password_or_vibrate_conf || "震动(不设置密码)";
 var password_setting = parseInt(password_setting_conf) || 123456;
 var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 0;
 var special_confirm_delay = parseInt(special_confirm_delay_conf) || 400;
 var ignore_ack_conf = true;
-var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 10;
+var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
 
 // 快速模式配置 - 减少各种延迟时间
 var fast_mode = true; // 默认启用快速模式
@@ -77,6 +81,36 @@ var refresh_on_prepare_sale = true; // 是否在准备发售状态下自动刷�
 var max_refresh_attempts = 50; // 最大刷新尝试次数
 var refresh_attempt_count = 0; // 当前刷新尝试次数
 var start_time = 0;
+
+// 支付线程相关变量 (参考 JS_hongzhong.js)
+var paymentThread = null;
+var paymentStartFlag = false;
+var isRunning = false;
+
+// === 线程协调标志位系统 ===
+var isPaymentProcessing = false; // 支付线程是否正在处理
+var shouldMainThreadPause = false; // 主线程是否应该暂停处理
+var paymentCompleted = false; // 支付是否完成
+var lastPaymentPageDetectTime = 0; // 上次检测到支付页面的时间
+var paymentProcessStartTime = 0; // 支付处理开始时间
+
+
+// === 坐标缓存系统 (参考 JS_hongzhong.js) ===
+var cached_confirm_info_coords = null; // 缓存"确认信息并支付"按钮坐标
+var cached_double_confirm_coords = null; // 缓存"确认无误"按钮坐标
+var cached_double_exactly_coords = null; // 缓存"就是这家"按钮坐标
+var calibration_status = {
+    confirm_info: false,
+    double_confirm: false,
+    double_exactly: false
+};
+
+// 预计算坐标对象
+var precomputedCoords = {
+    confirm_info: { x: 0, y: 0 },
+    double_confirm: { x: 0, y: 0 },
+    double_exactly: { x: 0, y: 0 }
+};
 
 //console.info('[欢迎使用]  抢购脚本');
 console.error('目前的购买方案为: ', purchase_type);
@@ -96,24 +130,54 @@ console.error('确定按钮点击后等待时间: ', special_confirm_delay + "ms
 //    console.error("有任何问题或功能建议，欢迎您发工单");
 //}
 
-var storage = storages.create('DRP');
-var w = floaty.window(
-    <vertical id="main_window" w="80" h="257">
-        <horizontal>
-            <button id="move_start" text="长按移动" bg="#ffffff" w="80" h="45" visibility="visible" marginBottom="8" />
-        </horizontal>
+// === 初始化坐标缓存系统 ===
+//console.info('[坐标缓存] 正在加载已保存的坐标...');
+loadCoordinatesFromStorage();
 
-        <button id="delivery_type" text={purchase_type} bg="#0f57f7" color="#ffffff" w="80" h="45" marginBottom="8" />
-        <button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#65a56d" color="#ffffff" w="80" h="45" marginBottom="8" />
-        <button id="settings" text="设置" bg="#000000" color="#ffffff" w="80" h="45" marginBottom="8" />
-        <horizontal>
-            <button id="start" text="开始" bg="#E83828" w="80" visibility="visible"/>
-            <button id="end" text="停止" bg="#f9ca5e" w="80" visibility="gone" />
-        </horizontal >
-    </vertical>
+// 初始化时检查校准状态
+if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
+    // 只显示弹窗提示，用户点击确定即可
+    dialogs.alert('校准提示', '请先完成按钮校准后再启动脚本\n\n请在脚本中点击  【设置】 ，并找到  【校准按钮】  点击，并按照文字信息对应页面按钮逐一校准');
+}
+
+var storage = storages.create('GITPOP');
+var w = floaty.window(
+    <vertical id="main_window" w="56" h="297">
+<horizontal>
+<button id="move_start" text="长按移动" bg="#ffffff" w="56" h="20" visibility="visible" marginBottom="5" textSize="12sp" />
+</horizontal>
+
+<button id="delivery_type" text={purchase_type} bg="#0f57f7" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
+<button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#65a56d" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
+<button id="settings" text="设置" bg="#000000" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
+<horizontal>
+<button id="start" text="开始" bg="#E83828" w="56" h="45" visibility="visible" textSize="12sp"/>
+<button id="end" text="停止" bg="#f9ca5e" w="56" h="45" visibility="gone" textSize="12sp" />
+</horizontal >
+</vertical>
 );
 
 w.main_window.attr('alpha', main_window_alpha);
+
+// 圆角按钮工具与初始化
+function dp(value) {
+    return Math.floor(value * (context.getResources().getDisplayMetrics().density));
+}
+function setRoundedBg(view, colorHex, radiusDp) {
+    try {
+        var drawable = new android.graphics.drawable.GradientDrawable();
+        drawable.setColor(colors.parseColor(colorHex));
+        drawable.setCornerRadius(dp(radiusDp || 6));
+        view.setBackground(drawable);
+    } catch (e) {}
+}
+// 初始化所有按钮为圆角背景
+setRoundedBg(w.move_start, '#ffffff', 6);
+setRoundedBg(w.delivery_type, (purchase_type === '送到家') ? '#E83828' : '#0f57f7', 6);
+setRoundedBg(w.purchase_count_btn, '#65a56d', 6);
+setRoundedBg(w.settings, '#000000', 6);
+setRoundedBg(w.start, '#E83828', 6);
+setRoundedBg(w.end, '#f9ca5e', 6);
 
 // 检查本地是否有配置文件（如config.json），有则隐藏设置按钮
 let configFileExists = false;
@@ -176,6 +240,13 @@ function updateStorage() {
         console.info("[本地读取参数更新] 确定按钮后点击后等待时间: " + special_confirm_delay + "ms");
     }
 
+    // 库存刷新间隔的本地读取
+    var s_refresh_delay = storage.get("s_refresh_delay");
+    if (s_refresh_delay !== null && s_refresh_delay !== undefined && s_refresh_delay !== '') {
+        refresh_delay = parseInt(s_refresh_delay);
+        console.info("[本地读取参数更新] 库存刷新间隔: " + refresh_delay + "ms");
+    }
+
     // 检查并加载确认信息按钮坐标到全局变量
     cached_confirm_info_coords = storage.get("confirm_info_btn_coords");
     if (cached_confirm_info_coords) {
@@ -191,6 +262,14 @@ function updateStorage() {
     } else {
 //        console.info('[坐标系统] 暂无存储的确认无误按钮坐标，首次识别时将自动存储');
     }
+
+        // 检查并加载按钮坐标到全局变量
+        cached_double_exactly_coords = storage.get("double_exactly_btn_coords");
+        if (cached_double_exactly_coords) {
+    //        console.info('[坐标系统] 已加载就是这家按钮坐标: (' + cached_double_exactly_coords.x + ', ' + cached_double_exactly_coords.y + ')');
+        } else {
+    //        console.info('[坐标系统] 暂无存储的就是这家按钮坐标，首次识别时将自动存储');
+        }
 }
 
 // 初始化时显示一次，延迟确保悬浮窗完全加载
@@ -199,6 +278,43 @@ updateParamSummary();
 updateStorage();
 
 function start() {
+    // 检查校准状态
+    if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
+        // 停止脚本
+        script_status = 0;
+
+        // 先显示弹窗提示，等待用户点击确定后再执行后续操作
+        dialogs.alert('校准提示', '❌ 检测到按钮坐标未校准，请先完成按钮校准后再启动脚本')
+            .then(function() {
+                // 用户点击确定后，自动打开设置菜单中的校准按钮子菜单
+                var items = Object.keys(settingsConfig);
+                var calibrateButtonIndex = items.indexOf('校准按钮');
+                if (calibrateButtonIndex >= 0) {
+                    var selectedItem = items[calibrateButtonIndex];
+                    var config = settingsConfig[selectedItem];
+                    showSubmenuSetting(selectedItem, config);
+                } else {
+                    // 如果找不到校准按钮，则显示普通设置菜单
+                    showSettingsMenu();
+                }
+            })
+            .catch(function() {
+                // 如果弹窗被取消，也执行相同的操作
+                var items = Object.keys(settingsConfig);
+                var calibrateButtonIndex = items.indexOf('校准按钮');
+                if (calibrateButtonIndex >= 0) {
+                    var selectedItem = items[calibrateButtonIndex];
+                    var config = settingsConfig[selectedItem];
+                    showSubmenuSetting(selectedItem, config);
+                } else {
+                    // 如果找不到校准按钮，则显示普通设置菜单
+                    showSettingsMenu();
+                }
+            });
+
+        return;
+    }
+
     script_status = 1;
     start_time = new Date().getTime();
     w.end.attr('visibility', 'visible');
@@ -230,35 +346,35 @@ w.delivery_type.click(function () {
     }
     w.delivery_type.setText(purchase_type);
     if (purchase_type === '送到家') {
-        w.delivery_type.attr('bg', '#E83828'); // 红色
+        setRoundedBg(w.delivery_type, '#E83828', 6); // 红色
     } else {
-        w.delivery_type.attr('bg', '#0f57f7'); // 蓝色
+        setRoundedBg(w.delivery_type, '#0f57f7', 6); // 蓝色
     }
     toast('配送方式已切换为: ' + purchase_type);
 });
 
 // 初始化时设置按钮颜色
 if (purchase_type === '送到家') {
-    w.delivery_type.attr('bg', '#E83828');
+    setRoundedBg(w.delivery_type, '#E83828', 6);
 } else {
-    w.delivery_type.attr('bg', '#0f57f7');
+    setRoundedBg(w.delivery_type, '#0f57f7', 6);
 }
 
 // 添加购买数量按钮点击事件
 w.purchase_count_btn.click(function () {
     dialogs.rawInput('请输入购买数量', purchase_count.toString())
-    .then(function(inputValue) {
-        if (inputValue !== null && inputValue !== '') {
-            var num = parseInt(inputValue);
-            if (num > 0) {
-                purchase_count = num;
-                updateParamSummary();
-                toast('购买数量已设置为: ' + num);
-            } else {
-                toast('请输入有效的数字');
+        .then(function(inputValue) {
+            if (inputValue !== null && inputValue !== '') {
+                var num = parseInt(inputValue);
+                if (num > 0) {
+                    purchase_count = num;
+                    updateParamSummary();
+                    toast('购买数量已设置为: ' + num);
+                } else {
+                    toast('请输入有效的数字');
+                }
             }
-        }
-    });
+        });
 });
 
 // 长按500ms移动，点击固定（无setAdjustEnabled，不出现四角符号）
@@ -270,39 +386,39 @@ let startX = 0, startY = 0, windowX = 0, windowY = 0;
 w.move_start.setOnTouchListener(function(view, event) {
     switch (event.getAction()) {
         case event.ACTION_DOWN:
-            moveStartPressed = true;
-            moveStartLongPressed = false;
-            startX = event.getRawX();
-            startY = event.getRawY();
-            windowX = w.getX();
-            windowY = w.getY();
-            moveStartPressTimer = setTimeout(function() {
-                if (moveStartPressed) {
-                    moveStartLongPressed = true;
-                }
-            }, 500);
-            return true;
-        case event.ACTION_MOVE:
-            if (moveStartLongPressed) {
-                let dx = event.getRawX() - startX;
-                let dy = event.getRawY() - startY;
-                w.setPosition(windowX + dx, windowY + dy);
+        moveStartPressed = true;
+        moveStartLongPressed = false;
+        startX = event.getRawX();
+        startY = event.getRawY();
+        windowX = w.getX();
+        windowY = w.getY();
+        moveStartPressTimer = setTimeout(function() {
+            if (moveStartPressed) {
+                moveStartLongPressed = true;
             }
-            return true;
+        }, 500);
+        return true;
+        case event.ACTION_MOVE:
+        if (moveStartLongPressed) {
+            let dx = event.getRawX() - startX;
+            let dy = event.getRawY() - startY;
+            w.setPosition(windowX + dx, windowY + dy);
+        }
+        return true;
         case event.ACTION_UP:
         case event.ACTION_CANCEL:
-            moveStartPressed = false;
-            if (moveStartPressTimer) {
-                clearTimeout(moveStartPressTimer);
-            }
-            // 松开时保存位置
-            if (moveStartLongPressed) {
-                var x = w.getX();
-                var y = w.getY();
-                storage.put('floaty_position_x', x);
-                storage.put('floaty_position_y', y);
-            }
-            return true;
+        moveStartPressed = false;
+        if (moveStartPressTimer) {
+            clearTimeout(moveStartPressTimer);
+        }
+        // 松开时保存位置
+        if (moveStartLongPressed) {
+            var x = w.getX();
+            var y = w.getY();
+            storage.put('floaty_position_x', x);
+            storage.put('floaty_position_y', y);
+        }
+        return true;
     }
     return false;
 });
@@ -310,97 +426,151 @@ w.move_start.setOnTouchListener(function(view, event) {
 // 设置项配置
 var settingsConfig = {
     '购买规格': {
-        type: 'choice',
-        options: ['单个', '整盒'],
-        value: () => specs,
-        setValue: (val) => {
-            specs = val;
-            console.info("[参数更新] 购买规格:" + val);
-        }
-    },
+    type: 'choice',
+    options: ['单个', '整端'],
+    value: () => specs,
+    setValue: (val) => {
+    specs = val;
+    storage.put('s_specs', specs);
+    console.info("[参数更新] 购买规格:" + val);
+}
+},
     '特殊款选项': {
-        type: 'input',
-        inputType: 'text',
-        value: () => '',
-        setValue: (val) => {
-            if (val) {
-                select_index = val;
-            }
-            console.info("[参数更新] 特殊款选项"+ val);
-        }
-    },
+    type: 'input',
+    inputType: 'text',
+    value: () => select_index.toString(),
+    setValue: (val) => {
+    if (val) {
+    select_index = parseInt(val);
+    storage.put('s_select_index', select_index);
+}
+    console.info("[参数更新] 特殊款选项: " + val);
+}
+},
     '库存刷新间隔(ms)': {
-        type: 'input',
-        inputType: 'number',
-        value: () => '',
-        setValue: (val) => {
-            var num = parseInt(val);
-            var min = 300; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
-            refresh_delay = num;
-            console.info("[参数更新] 库存刷新间隔:" + num + "ms");
-        }
-    },
+    type: 'input',
+    inputType: 'number',
+    value: () => refresh_delay.toString(),
+    setValue: (val) => {
+    var num = parseInt(val);
+    var min = 300; // 最小值限制
+    if (isNaN(num) || num < min) {
+        num = min;
+        toast('最低设置值为' + min + 'ms');
+    }
+    refresh_delay = num;
+    storage.put('s_refresh_delay', num);
+    console.info("[参数更新] 库存刷新间隔:" + num + "ms");
+}
+},
     '确认信息并支付点击后等待时间(ms)': {
-        type: 'input',
-        inputType: 'number',
-        value: () => ignore_ack_click_delay.toString(),
-        setValue: (val) => {
-            var num = parseInt(val);
-            var min = 100; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
-            ignore_ack_click_delay = num;
-            storage.put('s_ignore_ack_click_delay', num);
-            console.error("[本地参数更新(优先本地)] 确认支付等待时间:" + num + "ms");
-        }
-    },
+    type: 'input',
+    inputType: 'number',
+    value: () => ignore_ack_click_delay.toString(),
+    setValue: (val) => {
+    var num = parseInt(val);
+    var min = 100; // 最小值限制
+    if (isNaN(num) || num < min) {
+        num = min;
+        toast('最低设置值为' + min + 'ms');
+    }
+    ignore_ack_click_delay = num;
+    storage.put('s_ignore_ack_click_delay', num);
+    console.error("[本地参数更新(优先本地)] 确认支付等待时间:" + num + "ms");
+}
+},
     '确认无误/就是这家点击后等待时间(ms)': {
-        type: 'input',
-        inputType: 'number',
-        value: () => ignore_ack_click_confirm_delay.toString(),
-        setValue: (val) => {
-            var num = parseInt(val);
-            var min = 150; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
-            ignore_ack_click_confirm_delay = num;
-            storage.put('s_ignore_ack_click_confirm_delay', num);
-            console.error("[本地参数更新(优先本地)] 确认无误/就是这家等待时间:" + num + "ms");
-        }
-    },
+    type: 'input',
+    inputType: 'number',
+    value: () => ignore_ack_click_confirm_delay.toString(),
+    setValue: (val) => {
+    var num = parseInt(val);
+    var min = 150; // 最小值限制
+    if (isNaN(num) || num < min) {
+        num = min;
+        toast('最低设置值为' + min + 'ms');
+    }
+    ignore_ack_click_confirm_delay = num;
+    storage.put('s_ignore_ack_click_confirm_delay', num);
+    console.error("[本地参数更新(优先本地)] 确认无误/就是这家等待时间:" + num + "ms");
+}
+},
     '点击确定按钮点击后等待时间(ms)': {
-        type: 'input',
-        inputType: 'number',
-        value: () => special_confirm_delay.toString(),
-        setValue: (val) => {
-            var num = parseInt(val);
-            var min = 200; // 最小值限制
-            if (isNaN(num) || num < min) {
-                num = min;
-                toast('最低设置值为' + min + 'ms');
-            }
-            special_confirm_delay = num;
-            storage.put('s_special_confirm_delay', num);
-            console.error("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num + "ms");
-        }
-    },
+    type: 'input',
+    inputType: 'number',
+    value: () => special_confirm_delay.toString(),
+    setValue: (val) => {
+    var num = parseInt(val);
+    var min = 200; // 最小值限制
+    if (isNaN(num) || num < min) {
+        num = min;
+        toast('最低设置值为' + min + 'ms');
+    }
+    special_confirm_delay = num;
+    storage.put('s_special_confirm_delay', num);
+    console.error("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num + "ms");
+}
+},
     '支付密码': {
-        type: 'input',
-        inputType: 'text',
-        value: () => '',
-        setValue: (val) => {
-            if (val) {
-                password_setting = val;
-            }
-            console.info("[参数更新] 支付密码");
+    type: 'input',
+    inputType: 'text',
+    value: () => password_setting.toString(),
+    setValue: (val) => {
+    if (password_or_vibrate === "震动(不设置密码)") {
+        toast("请在控制台选择自动输入密码后再设置");
+        return; // 当设置为震动模式时不执行密码设置
+    }
+    if (val) {
+    password_setting = parseInt(val);
+    storage.put('s_password_setting', '******');
+}
+    console.info("[参数更新] 支付密码" );
+}
+},
+    '校准按钮': {
+        type: 'submenu',
+        description: '校准各种按钮的坐标',
+        submenu: function() {
+            var submenuItems = {};
+
+            // 动态生成菜单项名称
+            var confirmInfoName = calibration_status.confirm_info ? '校准[确认信息并支付]按钮✔️' : '校准[确认信息并支付]按钮❌';
+            var doubleExactlyName = calibration_status.double_exactly ? '校准[就是这家]按钮✔️' : '校准[就是这家]按钮❌';
+            var doubleConfirmName = calibration_status.double_confirm ? '校准[确认无误]按钮✔️' : '校准[确认无误]按钮❌';
+
+            submenuItems[confirmInfoName] = {
+                type: 'action',
+                description: '定位"确认信息并支付"按钮坐标',
+                action: function() {
+                    toast('请导航到订单确认页面，然后点击确定');
+                    threads.start(() => {
+                        calibrateButton('确认信息并支付', 'confirm_info');
+                    });
+                }
+            };
+
+            submenuItems[doubleExactlyName] = {
+                type: 'action',
+                description: '定位"就是这家"按钮坐标',
+                action: function() {
+                    toast('请导航到地址确认页面，然后点击确定');
+                    threads.start(() => {
+                        calibrateButton('就是这家', 'double_exactly');
+                    });
+                }
+            };
+
+            submenuItems[doubleConfirmName] = {
+                type: 'action',
+                description: '定位"确认无误"按钮坐标',
+                action: function() {
+                    toast('请导航到地址确认页面，然后点击确定');
+                    threads.start(() => {
+                        calibrateButton('确认无误', 'double_confirm');
+                    });
+                }
+            };
+            return submenuItems;
         }
     },
     '隐藏脚本': {
@@ -419,6 +589,14 @@ var settingsConfig = {
 // 显示设置菜单（二级页面）
 function showSettingsMenu() {
     var items = Object.keys(settingsConfig);
+
+    // 根据password_or_vibrate的值过滤设置项
+    if (password_or_vibrate === "震动(不设置密码)") {
+        items = items.filter(function(item) {
+            return item !== '支付密码';
+        });
+    }
+
     dialogs.select("请选择设置项", items)
         .then(function(itemIdx) {
             if (itemIdx < 0) return;
@@ -431,12 +609,14 @@ function showSettingsMenu() {
                 showInputSetting(selectedItem, config);
             } else if (config.type === 'action') {
                 showActionSetting(selectedItem, config);
+            } else if (config.type === 'submenu') {
+                showSubmenuSetting(selectedItem, config);
             }
         });
 }
 
 // 处理选择类型设置（三级页面）
-function showChoiceSetting(itemName, config) {
+function showChoiceSetting(itemName, config, callback) {
     var currentIdx = config.options.indexOf(config.value());
     dialogs.singleChoice(itemName, config.options, currentIdx)
         .then(function(selectedIdx) {
@@ -445,13 +625,17 @@ function showChoiceSetting(itemName, config) {
                 updateParamSummary();
                 toast(itemName + ' 已设置为: ' + config.options[selectedIdx]);
             }
-            // 设置完成后返回设置菜单
-            showSettingsMenu();
+            // 设置完成后根据是否有回调函数决定返回路径
+            if (callback && typeof callback === 'function') {
+                callback();
+            } else {
+                showSettingsMenu();
+            }
         });
 }
 
 // 处理输入类型设置（三级页面）
-function showInputSetting(itemName, config) {
+function showInputSetting(itemName, config, callback) {
     var currentValue = config.value();
     var prompt = '请输入 ' + itemName;
     if (config.inputType === 'number') {
@@ -459,33 +643,245 @@ function showInputSetting(itemName, config) {
     }
 
     dialogs.rawInput(prompt, currentValue)
-    .then(function(inputValue) {
-        if (inputValue !== null && inputValue !== '') {
-            try {
-                config.setValue(inputValue);
-                updateParamSummary();
-                toast(itemName + ' 已设置为: ' + inputValue);
-            } catch (e) {
-                toast('设置失败: ' + e.message);
+        .then(function(inputValue) {
+            if (inputValue !== null && inputValue !== '') {
+                try {
+                    config.setValue(inputValue);
+                    updateParamSummary();
+                    toast(itemName + ' 已设置为: ' + inputValue);
+                } catch (e) {
+                    toast('设置失败: ' + e.message);
+                }
             }
-        }
-        // 设置完成后返回设置菜单
-        showSettingsMenu();
-    });
+            // 设置完成后根据是否有回调函数决定返回路径
+            if (callback && typeof callback === 'function') {
+                callback();
+            } else {
+                showSettingsMenu();
+            }
+        });
 }
 
 // 处理操作类型设置（三级页面）
-function showActionSetting(itemName, config) {
+function showActionSetting(itemName, config, callback) {
     try {
         config.action();
-        console.info("[设置操作] " + itemName + " 执行成功");
+        //console.info("[设置操作] " + itemName + " 执行成功");
+        // 执行成功后根据是否有回调函数决定返回路径
+        if (callback && typeof callback === 'function') {
+            callback();
+        }
     } catch (e) {
         toast('操作执行失败: ' + e.message);
-        console.error("[设置操作] " + itemName + " 执行失败: " + e.message);
+        //console.error("[设置操作] " + itemName + " 执行失败: " + e.message);
         // 如果执行失败，则返回设置菜单
-        showSettingsMenu();
+        if (callback && typeof callback === 'function') {
+            callback();
+        } else {
+            showSettingsMenu();
+        }
     }
-    // 执行成功后不返回设置菜单，直接关闭
+}
+
+// 处理子菜单类型设置（三级页面）
+function showSubmenuSetting(itemName, config) {
+    // 处理动态生成的子菜单
+    var submenuItems;
+    if (typeof config.submenu === 'function') {
+        submenuItems = config.submenu();
+    } else {
+        submenuItems = config.submenu;
+    }
+
+    var submenuKeys = Object.keys(submenuItems);
+    dialogs.select(itemName, submenuKeys)
+        .then(function(subItemIdx) {
+            if (subItemIdx < 0) {
+                // 返回上级菜单
+                showSettingsMenu();
+                return;
+            }
+            var selectedSubItem = submenuKeys[subItemIdx];
+            var subConfig = submenuItems[selectedSubItem];
+
+            // 处理子菜单中的不同类型
+            if (subConfig.type === 'choice') {
+                showChoiceSetting(selectedSubItem, subConfig, function() {
+                    // 操作完成后直接关闭设置菜单
+                    return;
+                });
+            } else if (subConfig.type === 'input') {
+                showInputSetting(selectedSubItem, subConfig, function() {
+                    // 操作完成后直接关闭设置菜单
+                    return;
+                });
+            } else if (subConfig.type === 'action') {
+                showActionSetting(selectedSubItem, subConfig, function() {
+                    // 操作完成后直接关闭设置菜单
+                    return;
+                });
+            }
+        });
+}
+
+// === 坐标校准系统 (参考 JS_hongzhong.js) ===
+
+// 更新预计算坐标
+function updatePrecomputedCoords() {
+    if (cached_confirm_info_coords && cached_confirm_info_coords.length >= 4) {
+        precomputedCoords.confirm_info.x = cached_confirm_info_coords[0] + (cached_confirm_info_coords[2] - cached_confirm_info_coords[0]) / 2;
+        precomputedCoords.confirm_info.y = cached_confirm_info_coords[1] + (cached_confirm_info_coords[3] - cached_confirm_info_coords[1]) / 2;
+    }
+    if (cached_double_confirm_coords && cached_double_confirm_coords.length >= 4) {
+        precomputedCoords.double_confirm.x = cached_double_confirm_coords[0] + (cached_double_confirm_coords[2] - cached_double_confirm_coords[0]) / 2;
+        precomputedCoords.double_confirm.y = cached_double_confirm_coords[1] + (cached_double_confirm_coords[3] - cached_double_confirm_coords[1]) / 2;
+    }
+    if (cached_double_exactly_coords && cached_double_exactly_coords.length >= 4) {
+        precomputedCoords.double_exactly.x = cached_double_exactly_coords[0] + (cached_double_exactly_coords[2] - cached_double_exactly_coords[0]) / 2;
+        precomputedCoords.double_exactly.y = cached_double_exactly_coords[1] + (cached_double_exactly_coords[3] - cached_double_exactly_coords[1]) / 2;
+    }
+
+    //console.info('[坐标缓存] 预计算坐标已更新');
+   // console.info('[坐标缓存] 确认信息并支付: (' + precomputedCoords.confirm_info.x + ', ' + precomputedCoords.confirm_info.y + ')');
+   // console.info('[坐标缓存] 确认无误: (' + precomputedCoords.double_confirm.x + ', ' + precomputedCoords.double_confirm.y + ')');
+    //console.info('[坐标缓存] 就是这家: (' + precomputedCoords.double_exactly.x + ', ' + precomputedCoords.double_exactly.y + ')');
+}
+
+// 校准按钮坐标 (通用函数)
+function calibrateButton(buttonTextArray, buttonType) {
+    //console.info('[坐标校准] 开始定位按钮: ' + JSON.stringify(buttonTextArray) + ', 类型: ' + buttonType);
+
+    try {
+        var targetElement = null;
+        var foundText = '';
+
+        // 支持数组形式的按钮文本
+        if (Array.isArray(buttonTextArray)) {
+            for (var i = 0; i < buttonTextArray.length; i++) {
+                targetElement = className('android.widget.TextView').text(buttonTextArray[i]).findOne(3000);
+                if (targetElement) {
+                    foundText = buttonTextArray[i];
+                    break;
+                }
+            }
+        } else {
+            targetElement = className('android.widget.TextView').text(buttonTextArray).findOne(3000);
+            foundText = buttonTextArray;
+        }
+
+        if (targetElement) {
+            var bounds = targetElement.bounds();
+            var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+
+            if (buttonType === 'confirm_info') {
+                cached_confirm_info_coords = coords;
+                calibration_status.confirm_info = true;
+            } else if (buttonType === 'double_confirm') {
+                cached_double_confirm_coords = coords;
+                calibration_status.double_confirm = true;
+            } else if (buttonType === 'double_exactly') {
+                cached_double_exactly_coords = coords;
+                calibration_status.double_exactly = true;
+            }
+
+            updatePrecomputedCoords();
+
+            console.info('[按钮校准] "' + foundText + '" 按钮定位成功');
+            toast('"' + foundText + '" 按钮定位成功');
+
+            // 保存到本地存储
+            saveCoordinatesToStorage();
+
+        } else {
+            var displayText = Array.isArray(buttonTextArray) ? buttonTextArray.join('或') : buttonTextArray;
+            console.warn('[按钮校准] 未找到 "' + displayText + '" 按钮');
+            toast('未找到 "' + displayText + '" 按钮，请确保在正确页面');
+        }
+    } catch (e) {
+        console.error('[按钮校准] 定位按钮时发生错误: ' + e);
+        toast('定位失败: ' + e);
+    }
+}
+
+// 保存坐标到本地存储
+function saveCoordinatesToStorage() {
+    try {
+        if (cached_confirm_info_coords) {
+            storages.create("coordinate_cache").put("confirm_info_coords", JSON.stringify(cached_confirm_info_coords));
+        }
+        if (cached_double_confirm_coords) {
+            storages.create("coordinate_cache").put("double_confirm_coords", JSON.stringify(cached_double_confirm_coords));
+        }
+        if (cached_double_exactly_coords) {
+            storages.create("coordinate_cache").put("double_exactly_coords", JSON.stringify(cached_double_exactly_coords));
+        }
+        storages.create("coordinate_cache").put("calibration_status", JSON.stringify(calibration_status));
+        console.info('[校准缓存] 已存储');
+    } catch (e) {
+        console.error('[校准缓存] 存储失败: ' + e);
+    }
+}
+
+// 从本地存储加载坐标
+function loadCoordinatesFromStorage() {
+    try {
+        var storage = storages.create("coordinate_cache");
+
+        var confirmInfoCoordsStr = storage.get("confirm_info_coords");
+        if (confirmInfoCoordsStr) {
+            cached_confirm_info_coords = JSON.parse(confirmInfoCoordsStr);
+        }
+
+        var doubleConfirmCoordsStr = storage.get("double_confirm_coords");
+        if (doubleConfirmCoordsStr) {
+            cached_double_confirm_coords = JSON.parse(doubleConfirmCoordsStr);
+        }
+
+        var doubleExactlyCoordsStr = storage.get("double_exactly_coords");
+        if (doubleExactlyCoordsStr) {
+            cached_double_exactly_coords = JSON.parse(doubleExactlyCoordsStr);
+        }
+
+        var calibrationStatusStr = storage.get("calibration_status");
+        if (calibrationStatusStr) {
+            calibration_status = JSON.parse(calibrationStatusStr);
+        }
+
+        updatePrecomputedCoords();
+        //console.info('[校准缓存] 已从存储加载');
+
+    } catch (e) {
+        console.warn('[校准缓存] 加载失败: ' + e);
+    }
+}
+
+// 使用坐标快速点击
+function clickByCoordinates(buttonType) {
+    try {
+        var x, y;
+        if (buttonType === 'confirm_info' && calibration_status.confirm_info) {
+            x = precomputedCoords.confirm_info.x;
+            y = precomputedCoords.confirm_info.y;
+            //console.info('[坐标点击] 使用缓存坐标点击信息并支付按钮: (' + x + ', ' + y + ')');
+        } else if (buttonType === 'double_confirm' && calibration_status.double_confirm) {
+            x = precomputedCoords.double_confirm.x;
+            y = precomputedCoords.double_confirm.y;
+            //console.info('[坐标点击] 使用缓存坐标点击确认无误按钮: (' + x + ', ' + y + ')');
+        } else if (buttonType === 'double_exactly' && calibration_status.double_exactly) {
+            x = precomputedCoords.double_exactly.x;
+            y = precomputedCoords.double_exactly.y;
+           // console.info('[坐标点击] 使用缓存坐标点击就是这家按钮: (' + x + ', ' + y + ')');
+        } else {
+           // console.warn('[坐标点击] 坐标未校准，无法使用坐标点击: ' + buttonType);
+            return false;
+        }
+        press(x, y, 20); // 使用20ms的短按
+        return true;
+
+    } catch (e) {
+        console.error('[点击] 缓存点击失败: ' + e);
+        return false;
+    }
 }
 
 w.settings.click(function () {
@@ -815,11 +1211,13 @@ function check_current_page_tree(header_text, current_webview) {
         if (hidden_confirm_btn) {
             return { header: header_text, status: "confirm_and_pay" };
         }
+        if (className('android.widget.TextView').text('自提门店列表').exists()){
+           //console.info("自提门店列表");
+           return { header: header_text, status: "back" };
+        }
 
         return { header: header_text, status: "default" };
     } else {
-
-
         return { header: header_text, status: "default" };
     }
 }
@@ -1144,12 +1542,12 @@ function getPasswordKeyboardCoordinates() {
                 var centerY = bounds.centerY();
 
                 numberCoordinates[numberText] = {
-                    x: centerX,
-                    y: centerY,
-                    left: bounds.left,
-                    top: bounds.top,
-                    right: bounds.right,
-                    bottom: bounds.bottom
+                        x: centerX,
+                        y: centerY,
+                        left: bounds.left,
+                        top: bounds.top,
+                        right: bounds.right,
+                        bottom: bounds.bottom
                 };
 
                 foundNumbers.push(numberText);
@@ -1201,12 +1599,12 @@ function getPasswordKeyboardCoordinates() {
             var centerY = bounds.centerY();
 
             numberCoordinates["0"] = {
-                x: centerX,
-                y: centerY,
-                left: bounds.left,
-                top: bounds.top,
-                right: bounds.right,
-                bottom: bounds.bottom
+                    x: centerX,
+                    y: centerY,
+                    left: bounds.left,
+                    top: bounds.top,
+                    right: bounds.right,
+                    bottom: bounds.bottom
             };
 
             foundNumbers.push("0");
@@ -1467,6 +1865,144 @@ var defaultInterval = 150;
 var submited_refresh_flag = false;
 var submited_refresh_count = 0;
 
+function safeClickByText(_0x222437,_0x407a0d){
+	var _0xb64220=_0x222437.text(_0x407a0d).findOne(500);
+	if(_0xb64220){
+		_0xb64220.click();
+		return true;
+	}
+	return false;
+}
+
+// 支付流程函数 (参考 JS_hongzhong.js 的 _0x5eefae 函数)
+function startPaymentProcess() {
+
+    // === 设置线程协调状态 ===
+    isPaymentProcessing = true;
+    shouldMainThreadPause = true;
+    paymentCompleted = false;
+    paymentProcessStartTime = Date.now();
+
+    //console.info('[线程协调] 支付线程已接管页面处理，主线程暂停');
+    //console.info('isRunning'+isRunning+'paymentThread:'+paymentThread+'!isInterrupted:'+!paymentThread.isInterrupted());
+
+        // === 支付流程主循环 ===
+    if (isRunning && paymentThread && !paymentThread.isInterrupted()) {
+            // 核心判断：检查是否还在确认订单页面
+//            if (!className('android.widget.TextView').text('确认订单').exists()) {
+//                console.log("[支付流程] 已离开确认订单页面，支付流程结束");
+//                return;
+//            }
+            // 1. 优先使用坐标点击 "确认信息并支付" 按钮（极速模式）
+            if (calibration_status.confirm_info) {
+                clickByCoordinates('confirm_info');
+//                press(precomputedCoords.confirm_info.x, precomputedCoords.confirm_info_y, 20);
+//                console.info("[坐标点击] 使用缓存坐标点击 确认信息并支付");
+                  console.error("[点击] 确认信息并支付1");
+                sleep(ignore_ack_click_delay);
+
+            }
+
+            // 根据购买类型选择不同的确认按钮
+            if (purchase_type === '送到家') {
+                clickByCoordinates('double_confirm');
+//                press(precomputedCoords.double_confirm.x, precomputedCoords.double_confirm.y, 20);
+//                console.info("[坐标点击] 使用缓存坐标点击 确认无误");
+                console.info("[点击] 确认无误1");
+            } else if (purchase_type === '到店取') {
+                clickByCoordinates('double_exactly');
+//                press(precomputedCoords.double_exactly.x, precomputedCoords.double_exactly.y, 20);
+//                console.info("[坐标点击] 使用缓存坐标点击 就是这家");
+                console.info("[点击] 就是这家1");
+            } else {
+                // 默认使用 double_confirm
+                clickByCoordinates('double_confirm');
+//                press(precomputedCoords.double_confirm.x, precomputedCoords.double_confirm.y, 20);
+//                console.info("[坐标点击] 使用缓存坐标点击 确认无误|就是这家");
+                console.info("[点击] 确认无误1");
+            }
+            sleep(ignore_ack_click_confirm_delay);
+
+
+            // 添加点击状态跟踪，确保顺序点击
+            var confirmInfoClicked = false;
+            var doubleConfirmClicked = false;
+
+            while (className('android.widget.TextView').text('确认订单').exists() == true) {
+//                console.log('文本：查找\'确认信息并支付\'按钮',1);
+                if(className('android.widget.TextView').text('确认信息并支付').exists()==true && !confirmInfoClicked){
+                	safeClickByText(className('android.widget.TextView'),'确认信息并支付');
+                    console.error("[点击] 确认信息并支付2");
+                    confirmInfoClicked = true;
+                    doubleConfirmClicked = false;
+                    sleep(ignore_ack_click_delay + 50);
+                }
+
+//                console.log('文本：查找\'就是这家\'/\'确认无误\'按钮',1);
+                if(confirmInfoClicked && !doubleConfirmClicked) {
+                    if(className('android.widget.TextView').text('就是这家').exists()==true) {
+                    	safeClickByText(className('android.widget.TextView'),'就是这家');
+                        console.info("[点击] 就是这家2");
+                        doubleConfirmClicked = true;
+                        confirmInfoClicked = false;
+                        sleep(ignore_ack_click_confirm_delay);
+                    } else if(className('android.widget.TextView').text('确认无误').exists()==true){
+                    	safeClickByText(className('android.widget.TextView'),'确认无误');
+                        console.info("[点击] 确认无误2");
+                        doubleConfirmClicked = true;
+                        confirmInfoClicked = false;
+                        sleep(ignore_ack_click_confirm_delay);
+                    }
+                }
+
+                // 如果两个步骤都完成了，等待页面响应
+
+                sleep(100); // 短暂等待，避免过度循环
+            }
+
+            // 5. 如果没有找到任何相关按钮，短暂等待后继续
+            sleep(50);
+
+            // 6. 检查是否已进入支付页面，设置submit_flag
+            // 简化判定条件：离开确认订单页面且找不到webview_parent_node时设置支付标志
+            if (!className('android.widget.TextView').text('确认订单').exists()) {
+                // 检查是否找不到webview_parent_node（通常表示进入了支付页面）
+                var webview_parent_node = get_webview_parent_node();
+                if (!webview_parent_node) {
+                    submit_flag = true;
+                    console.info("[支付线程] 检测到已离开确认订单页面且无webview，设置支付标志");
+                }
+            }
+    }
+
+    isPaymentProcessing = false;
+    shouldMainThreadPause = false;
+    //console.info('[线程协调] 支付线程处理完成，主线程恢复正常');
+
+    //console.log('=== 支付流程结束 ===');
+
+    // 检查是否进入微信支付页面 - 支付线程完成后触发
+    if (submit_flag) {
+        console.error("[页面检测] 当前处于支付页面");
+        console.warn("[通知] 中单!中单！ 请及时支付以免错过!");
+        if (vibrate_time > 0) {
+            device.vibrate(vibrate_time);
+        }
+
+        // 判断是否需要输入密码
+        if (password_or_vibrate === "震动(不设置密码)") {
+            console.info("[密码设置] 选择了震动模式，不自动输入密码");
+        } else {
+            console.info("[密码输入] 开始等待微信支付密码键盘...");
+            waitAndInputPassword(password_setting.toString());
+        }
+        submit_flag = false;
+        if (script_pause_when_success_conf) {
+            script_status = 0;
+        }
+    }
+}
+
 while (true) {
     if (script_status == 0) {
         // Reset ALL state variables to ensure clean restart
@@ -1481,23 +2017,43 @@ while (true) {
         tried_clicked_confirm_to_pay_page_count = 0;
         submited_refresh_flag = false;
         submited_refresh_count = 0;
+
+        // 新增：支付线程清理 (参考 JS_hongzhong.js)
+        paymentStartFlag = false;
+        isRunning = false;
+        if (paymentThread && paymentThread.isAlive()) {
+            paymentThread.interrupt();
+            paymentThread = null;
+        }
+
+        // === 重置线程协调状态 ===
+        isPaymentProcessing = false;
+        shouldMainThreadPause = false;
+        paymentCompleted = false;
+        lastPaymentPageDetectTime = 0;
+        paymentProcessStartTime = 0;
+
+//        console.info('[线程协调] 所有线程状态已重置');
+
         sleep(10); // 使用快速模式停止延迟
         continue;
     }
     // log("===start===")
-    sleep(10); // 使用快速模式主循环延迟
+    sleep(100); // 使用快速模式主循环延迟
     // console.time("get_webview_parent_node");
     var webview_parent_node = get_webview_parent_node();
     if (!webview_parent_node) {
         if (debug_mode_conf) {
             log("Cannot find webview parent node.");
         }
+        // 支付页面检测和密码输入逻辑 - 不受支付线程影响
         if (submit_flag) {
             submit_flag = false;
             console.error("[页面检测] 当前处于支付页面");
             console.warn("[通知] 中单!中单！ 请及时支付以免错过!");
-            device.vibrate(vibrate_time);
-
+            if (vibrate_time > 0) {
+                device.vibrate(vibrate_time);
+            }
             // 判断是否需要输入密码
             if (password_or_vibrate === "震动(不设置密码)") {
                 console.info("[密码设置] 选择了震动模式，不自动输入密码");
@@ -1506,7 +2062,11 @@ while (true) {
                 waitAndInputPassword(password_setting.toString());
             }
         }
-        continue;
+        if (script_pause_when_success_conf) {
+           script_status = 0;
+        } else {
+           continue;
+        }
     }
     // console.timeEnd("get_webview_parent_node");
 
@@ -1543,213 +2103,120 @@ while (true) {
 
     switch (page_info.status) {
         case "confirm_and_pay":
-            tried_clicked_confirm_to_pay_page_count = 0;
-            var ignore_next_purchase_page_flag = false;
-            rebuy_flag = true;
-            if (!current_webview) {
-                if (debug_mode_conf) {
-                    log("Cannot find current webview.");
-                }
-                sleep(10);
-                break;
+        // ===== 双线程协调架构 (主线程 + 支付线程) =====
+
+        // 1. 检查是否应该让位给支付线程
+        if (shouldMainThreadPause && isPaymentProcessing) {
+            // 支付线程正在处理，主线程暂停处理此页面
+            if (debug_mode_conf) {
+                var processingTime = Math.round((Date.now() - paymentProcessStartTime) / 1000);
+               // console.log("[线程协调] 支付线程处理中(" + processingTime + "s)，主线程暂停");
             }
-
-            // console.time("find_last_view");
-            var last_view = null;
-            var childCount = current_webview.childCount();
-            for (var i = childCount - 1; i >= 0; i--) {
-                try {
-                    var child = current_webview.child(i);
-                } catch (e) {
-                    break;
-                }
-                if (!child) {
-                    break;
-                }
-                if (child.className() === "android.view.View") {
-                    last_view = child;
-                    break;
-                }
-
-
-            }
-            //console.timeEnd("childCount：" + childCount);
-
-            if (!last_view) {
-                if (debug_mode_conf) {
-                    log("Cannot find last view.");
-                }
-                sleep(30);
-                break;
-            }
-            //console.timeEnd("last_view.childCount：" + last_view.childCount());
-
-            var confirm_btn = null;
-            if (last_view.childCount() == 4) {
-                var confirm_btn = last_view.child(3);
-            } else if (last_view.childCount() == 8) {
-                var confirm_btn = last_view.child(7);
-                if (confirm_btn.text() != "确认信息并支付") {
-                    confirm_btn = null;
-                }
-            }
-            if (confirm_btn) {
-                dc_streak = 0;
-                payment_page_confirm_btn_retry_count++;
-
-                if (payment_page_confirm_btn_retry_count >= 4) {
-                    clickButton(confirm_btn);
-                    console.error("[点击] 确认信息并支付1.1");
-                    if (debug_mode_conf) {
-                        console.error("clicked confirm_btn (physical click)");
-                    }
-                    sleep(100);
-                } else {
-                    confirm_btn.click();
-                    console.error("[点击] 确认信息并支付1");
-                    if (debug_mode_conf) {
-                        console.error("clicked confirm_btn");
-                    }
-                }
-                sleep(extra_delay);
-                break;
-            }
-
-
-
-            if(last_view.childCount() == 2 && dc_streak != 0){
-                var hidden_confirm_info_btn = current_webview.findOne(text("确认信息并支付").algorithm('DFS'));
-                if (hidden_confirm_info_btn) {
-                        dc_streak = 0;
-                        hidden_confirm_info_btn.click();
-                        console.info("[点击] 确认信息并支付3");
-                        sleep(ignore_ack_click_delay);
-                        submit_flag = false;
-                        break;
-                }
-                break;
-            }
-
-            // console.time("find_double_confirm");
-            var double_confirm = null;
-            if (last_view.childCount() == 2) {
-                var second_child = last_view.child(1);
-                if (second_child && second_child.className() === "android.view.View") {
-                    if (second_child.childCount() == 1) {
-                        var inner_view = second_child.child(0);
-                        if (inner_view && inner_view.className() === "android.view.View") {
-                            double_confirm = inner_view.child(inner_view.childCount() - 1);
-                        }
-                    }
-                }
-            }
-            //console.timeEnd(double_confirm);
-            if (double_confirm) {
-                payment_page_confirm_btn_retry_count = 0;
-                if (dc_streak == 0) {
-                    // console.error("double_confirm click");
-                    last_double_confirm_time = new Date().getTime();
-                    double_confirm.click();
-                    console.error("[点击] 确认无误|就是这家1");
-                    if (debug_mode_conf) {
-                        console.error("clicked double_confirm");
-                    }
-                    submit_flag = true;
-                    dc_streak++;
-                    sleep(250 + extra_delay);
-                } else if (dc_streak >= 10) {
-                    double_confirm.click();
-                    if (debug_mode_conf) {
-                        console.error("clicked double_confirm");
-                    }
-                    submit_flag = true;
-                    dc_streak = 0;
-                } else {
-                    dc_streak++;
-                    sleep(20);
-                }
-                break;
-            }
-
-            // 统一的 break 逻辑
-
-    if(true){
-        payment_page_confirm_btn_retry_count = 0;
-        var hidden_double_confirm = current_webview.findOne(textMatches(/(确认无误|就是这家)/).algorithm('DFS'));
-        if (hidden_double_confirm) {
-            if (dc_streak == 0) {
-                last_double_confirm_time = new Date().getTime();
-                hidden_double_confirm.click();
-                console.info("[点击] 确认无误|就是这家2");
-                submit_flag = true;
-                dc_streak++;
-                sleep(ignore_ack_click_confirm_delay);
-                break;
-            }
-        }
-        // 处理"确认信息并支付"按钮
-        var hidden_confirm_btn = current_webview.findOne(text("确认信息并支付").algorithm('DFS'));
-            if (hidden_confirm_btn) {
-                dc_streak = 0;
-                hidden_confirm_btn.click();
-                console.info("[点击] 确认信息并支付2");
-                sleep(ignore_ack_click_delay);
-                submit_flag = false;
+            sleep(500); // 较长等待时间，给支付线程更多处理时间
             break;
         }
-    }
-            // 处理"确认无误|就是这家"按钮
 
-            submit_flag = false;
-//            console.error("submit_flag = FALSE,结束循环，dc_streak:"+dc_streak)
+        // 2. 检查支付是否已完成
+        if (paymentCompleted) {
+            //console.log("[线程协调] 支付已完成，主线程恢复正常监控");
+            paymentCompleted = false; // 重置标志
+            sleep(100);
             break;
+        }
+
+        // 3. 检查支付线程状态并启动新的支付线程（如果需要）
+        // 先清理旧线程，确保只有一个支付线程运行
+        if (paymentThread && paymentThread.isAlive()) {
+            paymentThread.interrupt();
+           // console.info("[线程管理] 主线程中断旧支付线程");
+        }
+
+        // 重置状态
+        isRunning = true;
+        paymentStartFlag = true;
+        lastPaymentPageDetectTime = Date.now();
+
+        // 启动支付线程
+        paymentThread = threads.start(startPaymentProcess);
+       // console.info("[线程协调] 支付线程已启动，主线程将暂停对此页面的处理");
+
+        // 4. 适当的等待时间，避免过度检测
+        sleep(200);
+        break;
 
         case "info_page":
-            submit_flag = false;
-            ignore_next_purchase_page_flag = false;
-            if (!rebuy_flag) {
-                sleep(100);
-                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                if (!confirm_btn) {
-                    // 检查是否有"立即购买"按钮
-                    var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
-                    if (buyNowBtn) {
-                        buyNowBtn.click();
-                        console.info("点击立即购买按钮");
-                        sleep(400);
+        submit_flag = false;
+        ignore_next_purchase_page_flag = false;
+        if (!rebuy_flag) {
+            sleep(100);
+            var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+            if (!confirm_btn) {
+                // 检查是否有"立即购买"按钮
+                var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+                if (buyNowBtn) {
+                    buyNowBtn.click();
+                    console.info("点击立即购买按钮");
+                    sleep(400);
+                } else {
+                    // 如果没有立即购买按钮，检查是否有"距离开售时间还剩00:00"状态
+                    var prepareSaleBtn = current_webview.findOne(text("距离开售时间还剩00:00").algorithm('DFS'));
+
+                    if (prepareSaleBtn) {
+                        refresh_attempt_count++;
+                        console.warn("[状态] 商品尚未发售，执行刷新操作 (第" + refresh_attempt_count + "次)");
+
+                        // 检查刷新次数限制
+                        if (refresh_attempt_count >= max_refresh_attempts) {
+                            console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
+                            script_status = 0;
+                            ui.post(() => {
+                                w.end.attr('visibility', 'gone');
+                                w.start.attr('visibility', 'visible');
+                            });
+                            break;
+                        }
+
+                        performRefreshActions(current_webview);
+
+                        // 刷新完成后立即检测是否有"立即购买"按钮
+                        console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
+
+                        // 等待页面加载完成
+                        sleep(1000);
+
+                        // 重新获取当前webview
+                        var updated_webview = get_current_webview_fast(current_node);
+                        if (updated_webview) {
+                            var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                            if (buyNowBtn) {
+                                console.warn("[检测] 检测到'立即购买'按钮，商品已发售！");
+                                console.info("立即点击购买按钮");
+                                buyNowBtn.click();
+
+                                // 重置刷新计数
+                                refresh_attempt_count = 0;
+
+                                // 等待页面跳转
+                                sleep(500);
+                                break;
+                            } else {
+                                console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
+                            }
+                        }
                     } else {
-                        // 如果没有立即购买按钮，检查是否有"距离开售时间还剩00:00"状态
+                        // 如果没有找到任何识别的按钮，检查是否有"距离开售时间还剩00:00"
                         var prepareSaleBtn = current_webview.findOne(text("距离开售时间还剩00:00").algorithm('DFS'));
 
                         if (prepareSaleBtn) {
-                            refresh_attempt_count++;
-                            console.warn("[状态] 商品尚未发售，执行刷新操作 (第" + refresh_attempt_count + "次)");
+                            console.info("[检测] 发现倒计时文字，商品尚未发售，等待500ms后再次检测");
+                            sleep(500);
 
-                            // 检查刷新次数限制
-                            if (refresh_attempt_count >= max_refresh_attempts) {
-                                console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
-                                script_status = 0;
-                                ui.post(() => {
-                                    w.end.attr('visibility', 'gone');
-                                    w.start.attr('visibility', 'visible');
-                                });
-                                break;
-                            }
-
-                            performRefreshActions(current_webview);
-
-                            // 刷新完成后立即检测是否有"立即购买"按钮
-                            console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
-
-                            // 等待页面加载完成
-                            sleep(1000);
-
-                            // 重新获取当前webview
+                            // 重新获取当前webview，检查是否有"立即购买"按钮
                             var updated_webview = get_current_webview_fast(current_node);
                             if (updated_webview) {
                                 var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
                                 if (buyNowBtn) {
-                                    console.warn("[检测] 检测到'立即购买'按钮，商品已发售！");
+                                    console.warn("[检测] 等待期间检测到'立即购买'按钮，商品已发售！");
                                     console.info("立即点击购买按钮");
                                     buyNowBtn.click();
 
@@ -1759,168 +2226,82 @@ while (true) {
                                     // 等待页面跳转
                                     sleep(500);
                                     break;
-                                } else {
-                                    console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
-                                }
-                            }
-                        } else {
-                            // 如果没有找到任何识别的按钮，检查是否有"距离开售时间还剩00:00"
-                            var prepareSaleBtn = current_webview.findOne(text("距离开售时间还剩00:00").algorithm('DFS'));
-
-                            if (prepareSaleBtn) {
-                                console.info("[检测] 发现倒计时文字，商品尚未发售，等待500ms后再次检测");
-                                sleep(500);
-
-                                // 重新获取当前webview，检查是否有"立即购买"按钮
-                                var updated_webview = get_current_webview_fast(current_node);
-                                if (updated_webview) {
-                                    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
-                                    if (buyNowBtn) {
-                                        console.warn("[检测] 等待期间检测到'立即购买'按钮，商品已发售！");
-                                        console.info("立即点击购买按钮");
-                                        buyNowBtn.click();
-
-                                        // 重置刷新计数
-                                        refresh_attempt_count = 0;
-
-                                        // 等待页面跳转
-                                        sleep(500);
-                                        break;
-                                    }
-                                }
-                            }
-
-                            // 如果没有找到任何识别的按钮，进行刷新
-                            console.info("未识别到购买按钮，执行刷新操作");
-                            performRefreshActions(current_webview);
-
-                            // 刷新完成后立即检测是否有"立即购买"按钮
-                            sleep(1000);
-                            var updated_webview = get_current_webview_fast(current_node);
-                            if (updated_webview) {
-                                var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
-                                if (buyNowBtn) {
-                                    console.warn("[检测] 检测到'立即购买'按钮，商品已发售！");
-                                    console.info("立即点击购买按钮");
-                                    buyNowBtn.click();
-
-                                    // 重置刷新计数
-                                    refresh_attempt_count = 0;
-
-                                    // 等待页面跳转
-                                    sleep(500);
-                                    break;
-                                } else {
-                                    console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
                                 }
                             }
                         }
-                    }
-                } else {
-                    var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                    if (!confirm_btn) {
-                        rebuy_flag = false;
-                    }
-                    sleep(150);
-                }
-            }
 
-            break;
+                        // 如果没有找到任何识别的按钮，进行刷新
+                        console.info("未识别到购买按钮，执行刷新操作");
+                        performRefreshActions(current_webview);
+
+                        // 刷新完成后立即检测是否有"立即购买"按钮
+                        sleep(1000);
+                        var updated_webview = get_current_webview_fast(current_node);
+                        if (updated_webview) {
+                            var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                            if (buyNowBtn) {
+                                console.warn("[检测] 检测到'立即购买'按钮，商品已发售！");
+                                console.info("立即点击购买按钮");
+                                buyNowBtn.click();
+
+                                // 重置刷新计数
+                                refresh_attempt_count = 0;
+
+                                // 等待页面跳转
+                                sleep(500);
+                                break;
+                            } else {
+                                console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
+                            }
+                        }
+                    }
+                }
+            } else {
+                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                if (!confirm_btn) {
+                    rebuy_flag = false;
+                }
+                sleep(150);
+            }
+        }
+
+        break;
 
 
         case "prepare_sale":
-            submit_flag = false;
-            ignore_next_purchase_page_flag = false;
+        submit_flag = false;
+        ignore_next_purchase_page_flag = false;
 
-            // 检查刷新次数限制
-            if (refresh_attempt_count >= max_refresh_attempts) {
-                console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
-                script_status = 0;
-                ui.post(() => {
-                    w.end.attr('visibility', 'gone');
-                    w.start.attr('visibility', 'visible');
-                });
-                break;
-            }
+        // 检查刷新次数限制
+        if (refresh_attempt_count >= max_refresh_attempts) {
+            console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
+            script_status = 0;
+            ui.post(() => {
+                w.end.attr('visibility', 'gone');
+                w.start.attr('visibility', 'visible');
+            });
+            break;
+        }
 
-            // 检查是否有"距离开售时间还剩00:00"文字
-            var prepareSaleBtn = current_webview.findOne(text("距离开售时间还剩00:00").algorithm('DFS'));
+        // 检查是否有"距离开售时间还剩00:00"文字
+        var prepareSaleBtn = current_webview.findOne(text("距离开售时间还剩00:00").algorithm('DFS'));
 
-            if (prepareSaleBtn) {
-                refresh_attempt_count++;
+        if (prepareSaleBtn) {
+            refresh_attempt_count++;
 
-                console.info("发现'距离开售时间还剩00:00'文字，先等待500ms检测是否有'立即购买'按钮 (第" + refresh_attempt_count + "次)");
+            console.info("发现'距离开售时间还剩00:00'文字，先等待500ms检测是否有'立即购买'按钮 (第" + refresh_attempt_count + "次)");
 
-                // 在刷新之前先等待500ms，检测是否有"立即购买"按钮出现
-                console.info("[等待] 等待500ms检测是否有'立即购买'按钮出现...");
-                sleep(500);
+            // 在刷新之前先等待500ms，检测是否有"立即购买"按钮出现
+            console.info("[等待] 等待500ms检测是否有'立即购买'按钮出现...");
+            sleep(500);
 
-                // 重新获取当前webview，检查是否有"立即购买"按钮
-                var updated_webview = get_current_webview_fast(current_node);
-                if (updated_webview) {
-                    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
-                    if (buyNowBtn) {
-                        console.warn("[成功] 🎉 等待期间检测到'立即购买'按钮，商品已发售！");
-                        console.info("立即点击购买按钮，跳过刷新操作");
-                        buyNowBtn.click();
-
-                        // 重置刷新计数
-                        refresh_attempt_count = 0;
-                        rebuy_flag = false;
-
-                        // 等待页面跳转
-                        sleep(500);
-                        break;
-                    }
-                }
-
-                // 如果没有检测到"立即购买"按钮，才进行刷新操作
-                console.info("[检测] 500ms内未检测到'立即购买'按钮，开始执行刷新操作");
-
-                if (refresh_on_prepare_sale) {
-                    performRefreshActions(current_webview);
-
-                    // 刷新完成后立即检测是否有"立即购买"按钮
-                    console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
-
-                    // 等待页面加载完成
-                    sleep(1000);
-
-                    // 重新获取当前webview（可能已经更新）
-                    var updated_webview_after_refresh = get_current_webview_fast(current_node);
-                    if (updated_webview_after_refresh) {
-                        var buyNowBtn = updated_webview_after_refresh.findOne(text("立即购买").algorithm('DFS'));
-                        if (buyNowBtn) {
-                            console.warn("[成功] 🎉 刷新后检测到'立即购买'按钮，商品已发售！");
-                            console.info("立即点击购买按钮");
-                            buyNowBtn.click();
-
-                            // 重置刷新计数
-                            refresh_attempt_count = 0;
-                            rebuy_flag = false;
-
-                            // 等待页面跳转
-                            sleep(500);
-                            break;
-                        } else {
-                            console.info("[检测] 刷新后暂未发现'立即购买'按钮，继续等待");
-                        }
-                    }
-                } else {
-                    console.info("[配置] 准备发售状态刷新已禁用，仅等待");
-                }
-
-                // 等待一段时间后再检查
-                sleep(refresh_delay);
-            } else {
-                // 如果没有找到相关按钮，可能页面已经改变，重新检测
-                console.info("未找到发售状态按钮，可能页面已更新或商品已发售");
-
-                // 立即检测是否有"立即购买"按钮
-                var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+            // 重新获取当前webview，检查是否有"立即购买"按钮
+            var updated_webview = get_current_webview_fast(current_node);
+            if (updated_webview) {
+                var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
                 if (buyNowBtn) {
-                    console.warn("[成功] 🎉 检测到'立即购买'按钮，商品已发售！");
-                    console.info("立即点击购买按钮");
+                    console.warn("[成功] 🎉 等待期间检测到'立即购买'按钮，商品已发售！");
+                    console.info("立即点击购买按钮，跳过刷新操作");
                     buyNowBtn.click();
 
                     // 重置刷新计数
@@ -1931,475 +2312,516 @@ while (true) {
                     sleep(500);
                     break;
                 }
-
-                refresh_attempt_count = 0; // 重置刷新计数
-                sleep(200);
             }
-            break;
-        case "error":
-            rebuy_flag = false;
-            submit_flag = false;
-            log("访问异常，账号被风控。");
-            // text("我知道了").click();
-            sleep(100);
-            break;
-        case "purchase":
-            if (ignore_next_purchase_page_flag) {
-                ignore_next_purchase_page_flag = false;
+
+            // 如果没有检测到"立即购买"按钮，才进行刷新操作
+            console.info("[检测] 500ms内未检测到'立即购买'按钮，开始执行刷新操作");
+
+            if (refresh_on_prepare_sale) {
+                performRefreshActions(current_webview);
+
+                // 刷新完成后立即检测是否有"立即购买"按钮
+                console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
+
+                // 等待页面加载完成
+                sleep(1000);
+
+                // 重新获取当前webview（可能已经更新）
+                var updated_webview_after_refresh = get_current_webview_fast(current_node);
+                if (updated_webview_after_refresh) {
+                    var buyNowBtn = updated_webview_after_refresh.findOne(text("立即购买").algorithm('DFS'));
+                    if (buyNowBtn) {
+                        console.warn("[成功] 🎉 刷新后检测到'立即购买'按钮，商品已发售！");
+                        console.info("立即点击购买按钮");
+                        buyNowBtn.click();
+
+                        // 重置刷新计数
+                        refresh_attempt_count = 0;
+                        rebuy_flag = false;
+
+                        // 等待页面跳转
+                        sleep(500);
+                        break;
+                    } else {
+                        console.info("[检测] 刷新后暂未发现'立即购买'按钮，继续等待");
+                    }
+                }
+            } else {
+                console.info("[配置] 准备发售状态刷新已禁用，仅等待");
+            }
+
+            // 等待一段时间后再检查
+            sleep(refresh_delay);
+        } else {
+            // 如果没有找到相关按钮，可能页面已经改变，重新检测
+            console.info("未找到发售状态按钮，可能页面已更新或商品已发售");
+
+            // 立即检测是否有"立即购买"按钮
+            var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+            if (buyNowBtn) {
+                console.warn("[成功] 🎉 检测到'立即购买'按钮，商品已发售！");
+                console.info("立即点击购买按钮");
+                buyNowBtn.click();
+
+                // 重置刷新计数
+                refresh_attempt_count = 0;
+                rebuy_flag = false;
+
+                // 等待页面跳转
+                sleep(500);
                 break;
             }
-            submit_flag = false;
-            dc_streak = 0;
-            if (!rebuy_flag) {
-                // 优化的并行识别和点击逻辑
-                console.info("[并行选择] 开始同时识别购买方式和规格...");
 
-                // 并行查找购买方式和规格的相关元素
-                var purchase_type_btn = null;
-                var specs_btn = null;
-                var purchase_found_method = "";
-                var specs_found_method = "";
+            refresh_attempt_count = 0; // 重置刷新计数
+            sleep(200);
+        }
+        break;
+        case "error":
+        rebuy_flag = false;
+        submit_flag = false;
+        log("访问异常，账号被风控。");
+        // text("我知道了").click();
+        sleep(100);
+        break;
+        case "purchase":
+        if (ignore_next_purchase_page_flag) {
+            ignore_next_purchase_page_flag = false;
+            break;
+        }
+        submit_flag = false;
+        dc_streak = 0;
+        if (!rebuy_flag) {
+            // 优化的并行识别和点击逻辑
+            //console.info("[并行选择] 开始同时识别购买方式和规格...");
 
-                // 快速扫描页面中的所有相关元素
-                console.info("[并行选择] 开始快速扫描页面元素...");
-                var allElements = current_webview.find(className("android.view.View").algorithm('DFS'));
-                var purchase_elements = [];
-                var specs_elements = [];
+            // 并行查找购买方式和规格的相关元素
+            var purchase_type_btn = null;
+            var specs_btn = null;
+            var purchase_found_method = "";
+            var specs_found_method = "";
 
-                // 方法1: 直接使用选择器查找，而不是遍历View元素
+            // 快速扫描页面中的所有相关元素
+            //console.info("[并行选择] 开始快速扫描页面元素...");
+            var allElements = current_webview.find(className("android.view.View").algorithm('DFS'));
+            var purchase_elements = [];
+            var specs_elements = [];
+
+            // 方法1: 直接使用选择器查找，而不是遍历View元素
 //                console.info("=== 尝试直接选择器查找方法 ===");
 
-                // 查找所有TextView元素
-                var textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
+            // 查找所有TextView元素
+            var textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
 //                console.info("找到TextView数量: " + textViews.length);
 
-                for (var i = 0; i < allElements.length; i++) {
-                    var element = allElements[i];
-                    try {
-                        var elementText = element.text();
-                        if (elementText) {
-                            // 检查购买方式元素
-                            if (purchase_type != '来回刷' && (elementText.includes(purchase_type) || elementText.includes("送到家") || elementText.includes("到店取"))) {
-                                purchase_elements.push({
-                                    text: elementText,
-                                    element: element,
-                                    clickable: element.clickable()
-                                });
-                            }
-
-                            // 检查规格元素
-                            if (elementText.includes("单个") || elementText.includes("整盒") || elementText.includes("整端") || elementText.includes("盲盒")) {
-                                specs_elements.push({
-                                    text: elementText,
-                                    element: element,
-                                    clickable: element.clickable()
-                                });
-                            }
+            for (var i = 0; i < allElements.length; i++) {
+                var element = allElements[i];
+                try {
+                    var elementText = element.text();
+                    if (elementText) {
+                        // 检查购买方式元素
+                        if (purchase_type != '来回刷' && (elementText.includes(purchase_type) || elementText.includes("送到家") || elementText.includes("到店取"))) {
+                            purchase_elements.push({
+                                text: elementText,
+                                element: element,
+                                clickable: element.clickable()
+                            });
                         }
-                    } catch (e) {
-                        // 忽略错误
+
+                        // 检查规格元素
+                        if (elementText.includes("单个") || elementText.includes("整盒") || elementText.includes("整端") || elementText.includes("盲盒")) {
+                            specs_elements.push({
+                                text: elementText,
+                                element: element,
+                                clickable: element.clickable()
+                            });
+                        }
                     }
+                } catch (e) {
+                    // 忽略错误
                 }
-                var buttons = current_webview.find(className("android.widget.Button").algorithm('DFS'));
-                console.info("找到Button数量: " + buttons.length);
+            }
+            var buttons = current_webview.find(className("android.widget.Button").algorithm('DFS'));
+            //console.info("找到Button数量: " + buttons.length);
 
-                for (var i = 0; i < buttons.length; i++) {
-                    try {
-                        var btn = buttons[i];
-                        var btnText = btn.text();
-                        console.info("Button[" + (i+1) + "] 文本: '" + (btnText || "") + "'");
+            for (var i = 0; i < buttons.length; i++) {
+                try {
+                    var btn = buttons[i];
+                    var btnText = btn.text();
+                    console.info("Button[" + (i+1) + "] 文本: '" + (btnText || "") + "'");
 
-                        if (btnText) {
-                            // 检查购买方式
-                            if (purchase_type != '来回刷' && (btnText.includes(purchase_type) || btnText.includes("送到家") || btnText.includes("到店取"))) {
-                                purchase_elements.push({
-                                    text: btnText,
-                                    element: btn,
-                                    clickable: btn.clickable()
-                                });
-                            }
-                            // 检查规格
-                            if (btnText.includes("单个") || btnText.includes("整盒") || btnText.includes("整端") || btnText.includes("盲盒")) {
-                                specs_elements.push({
-                                    text: btnText,
-                                    element: btn,
-                                    clickable: btn.clickable()
-                                });
-                            }
-                                                }
-                    } catch (e) {
-                        // 忽略错误
+                    if (btnText) {
+                        // 检查购买方式
+                        if (purchase_type != '来回刷' && (btnText.includes(purchase_type) || btnText.includes("送到家") || btnText.includes("到店取"))) {
+                            purchase_elements.push({
+                                text: btnText,
+                                element: btn,
+                                clickable: btn.clickable()
+                            });
+                        }
+                        // 检查规格
+                        if (btnText.includes("单个") || btnText.includes("整盒") || btnText.includes("整端") || btnText.includes("盲盒")) {
+                            specs_elements.push({
+                                text: btnText,
+                                element: btn,
+                                clickable: btn.clickable()
+                            });
+                        }
                     }
+                } catch (e) {
+                    // 忽略错误
                 }
+            }
 
 
 
-                var selectElements = []; // 存储"选择**"元素信息
-                var buyMethodIndex = -1; // "购买方式"的索引
-                var selectSpecIndex = -1; // "选择规格"的索引
-                var selectOptionsToClick = []; // 存储需要点击的选择项
+            var selectElements = []; // 存储"选择**"元素信息
+            var buyMethodIndex = -1; // "购买方式"的索引
+            var selectSpecIndex = -1; // "选择规格"的索引
+            var selectOptionsToClick = []; // 存储需要点击的选择项
 
-                // 1. 找到所有"选择**"元素和关键元素的位置
-                for (var i = 0; i < textViews.length; i++) {
-                    try {
-                        var tv = textViews[i];
-                        var tvText = tv.text();
+            // 1. 找到所有"选择**"元素和关键元素的位置
+            for (var i = 0; i < textViews.length; i++) {
+                try {
+                    var tv = textViews[i];
+                    var tvText = tv.text();
 
-                        if (tvText) {
-                            // 匹配"选择**"模式
-                            if (tvText.startsWith("选择")) {
-                                selectElements.push({
+                    if (tvText) {
+                        // 匹配"选择**"模式
+                        if (tvText.startsWith("选择")) {
+                            selectElements.push({
                                     index: i,
                                     text: tvText,
                                     element: tv
-                                });
+                            });
                             //    console.info("找到选择元素[" + i + "]: " + tvText);
-                            }
-
-                            // 找到"购买方式"
-                            if (tvText === "购买方式") {
-                                buyMethodIndex = i;
-                            //    console.info("找到购买方式[" + i + "]: " + tvText);
-                            }
-
-                            // 找到"选择规格"
-                            if (tvText === "选择规格") {
-                                selectSpecIndex = i;
-                            //   console.info("找到选择规格[" + i + "]: " + tvText);
-                            }
                         }
-                    } catch (e) {
-                        // 忽略错误
+
+                        // 找到"购买方式"
+                        if (tvText === "购买方式") {
+                            buyMethodIndex = i;
+                            //    console.info("找到购买方式[" + i + "]: " + tvText);
+                        }
+
+                        // 找到"选择规格"
+                        if (tvText === "选择规格") {
+                            selectSpecIndex = i;
+                            //   console.info("找到选择规格[" + i + "]: " + tvText);
+                        }
+                    }
+                } catch (e) {
+                    // 忽略错误
+                }
+            }
+
+            // 2. 为每个"选择**"元素创建spec_select数组
+            for (var i = 0; i < selectElements.length; i++) {
+                var selectElement = selectElements[i];
+                var selectIndex = selectElement.index;
+                var currentSelectNumber = i + 1; // 当前是第几个"选择**"区域
+//                    console.info("分析第" + currentSelectNumber + "个选择元素: " + selectElement.text + " (索引:" + selectIndex + ")");
+
+                //找到在当前"选择**"下面且最靠近的"购买方式"或"选择规格"
+                var nearestEndIndex = -1;
+                var endElementText = "";
+
+                // 检查"购买方式"是否在下面且更近
+                if (buyMethodIndex > selectIndex) {
+                    nearestEndIndex = buyMethodIndex;
+                    endElementText = "购买方式";
+                }
+
+                // 检查"选择规格"是否在下面且更近
+                if (selectSpecIndex > selectIndex) {
+                    if (nearestEndIndex === -1 || selectSpecIndex < nearestEndIndex) {
+                        nearestEndIndex = selectSpecIndex;
+                        endElementText = "选择规格";
                     }
                 }
 
-                // 2. 为每个"选择**"元素创建spec_select数组
-                for (var i = 0; i < selectElements.length; i++) {
-                    var selectElement = selectElements[i];
-                    var selectIndex = selectElement.index;
-                    var currentSelectNumber = i + 1; // 当前是第几个"选择**"区域
-//                    console.info("分析第" + currentSelectNumber + "个选择元素: " + selectElement.text + " (索引:" + selectIndex + ")");
-
-                    //找到在当前"选择**"下面且最靠近的"购买方式"或"选择规格"
-                    var nearestEndIndex = -1;
-                    var endElementText = "";
-
-                    // 检查"购买方式"是否在下面且更近
-                    if (buyMethodIndex > selectIndex) {
-                        nearestEndIndex = buyMethodIndex;
-                        endElementText = "购买方式";
-                    }
-
-                    // 检查"选择规格"是否在下面且更近
-                    if (selectSpecIndex > selectIndex) {
-                        if (nearestEndIndex === -1 || selectSpecIndex < nearestEndIndex) {
-                            nearestEndIndex = selectSpecIndex;
-                            endElementText = "选择规格";
-                        }
-                    }
-
-                    if (nearestEndIndex !== -1) {
+                if (nearestEndIndex !== -1) {
 //                       console.info("找到最近的结束元素: " + endElementText + " (索引:" + nearestEndIndex + ")");
 
-                        // 创建spec_select数组，只包含中间的选项元素（排除开始和结束元素）
-                        var spec_select = [];
-                        for (var j = selectIndex + 1; j < nearestEndIndex; j++) {
-                            try {
-                                var element = textViews[j];
-                                var elementText = element.text();
-                                if (elementText && elementText.trim().length > 0) {
-                                    spec_select.push({
-                                        index: j,
-                                        text: elementText,
-                                        element: element,
-                                        arrayIndex: spec_select.length + 1 // 从1开始的数组索引
-                                    });
-                                }
-                            } catch (e) {
-                                // 忽略错误
+                    // 创建spec_select数组，只包含中间的选项元素（排除开始和结束元素）
+                    var spec_select = [];
+                    for (var j = selectIndex + 1; j < nearestEndIndex; j++) {
+                        try {
+                            var element = textViews[j];
+                            var elementText = element.text();
+                            if (elementText && elementText.trim().length > 0) {
+                                spec_select.push({
+                                    index: j,
+                                    text: elementText,
+                                    element: element,
+                                    arrayIndex: spec_select.length + 1 // 从1开始的数组索引
+                                });
                             }
+                        } catch (e) {
+                            // 忽略错误
                         }
+                    }
 
 //                        console.info("=== 第" + currentSelectNumber + "个选择区域: " + selectElement.text + " 的选项元素 ===");
-                        for (var k = 0; k < spec_select.length; k++) {
+                    for (var k = 0; k < spec_select.length; k++) {
 //                            console.info("  选项[" + spec_select[k].arrayIndex + "] " + spec_select[k].text + " (TextView索引:" + spec_select[k].index + ")");
-                        }
+                    }
 //                        console.info("=== 共 " + spec_select.length + " 个选项 ===");
 
-                        // 记录需要点击的选择项，不立即点击
-                        if (select_index > 0 && select_index <= spec_select.length) {
-                            var targetOption = spec_select[select_index - 1]; // 数组从0开始，但配置从1开始
-                            selectOptionsToClick.push({
+                    // 记录需要点击的选择项，不立即点击
+                    if (select_index > 0 && select_index <= spec_select.length) {
+                        var targetOption = spec_select[select_index - 1]; // 数组从0开始，但配置从1开始
+                        selectOptionsToClick.push({
                                 selectArea: selectElement.text,
                                 selectAreaNumber: currentSelectNumber,
                                 optionText: targetOption.text,
                                 element: targetOption.element,
                                 optionIndex: select_index
-                            });
+                        });
 //                            console.info("📋 记录待点击: 第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")中的第" + select_index + "个选项 - " + targetOption.text);
-                        } else if (select_index > 0) {
+                    } else if (select_index > 0) {
 //                            console.warn("配置的选项索引 " + select_index + " 超出范围，第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")只有 " + spec_select.length + " 个选项");
-                        }
-
-                    } else {
-//                        console.info("未找到在第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")下面的购买方式或选择规格");
-                    }
-                }
-
-                console.info("[并行选择] 扫描完成 - 购买方式元素: " + purchase_elements.length + " 个, 规格元素: " + specs_elements.length + " 个");
-
-                // 并行处理购买方式选择
-                if (purchase_type != '来回刷') {
-                    console.info("[并行选择] 处理购买方式: " + purchase_type);
-
-                    // 方法1: 从扫描结果中快速匹配
-                    for (var i = 0; i < purchase_elements.length; i++) {
-                        var element = purchase_elements[i];
-                        if (element.text.includes(purchase_type)) {
-                            purchase_type_btn = element.element;
-                            purchase_found_method = "扫描匹配";
-                            console.info("[并行选择] 购买方式扫描匹配成功: " + element.text);
-                            break;
-                        }
                     }
 
-                    // 方法2: 如果扫描没找到，使用传统方法
-                    if (!purchase_type_btn) {
-                        purchase_type_btn = current_webview.findOne(text(purchase_type).algorithm('DFS'));
-                        if (purchase_type_btn) {
-                            purchase_found_method = "精确匹配";
-                        } else {
-                            purchase_type_btn = current_webview.findOne(textStartsWith(purchase_type).algorithm('DFS'));
-                            if (purchase_type_btn) {
-                                purchase_found_method = "模糊匹配";
-                            }
-                        }
-                    }
-                }
-
-                // 并行处理规格选择
-                console.info("[并行选择] 处理规格: " + specs);
-
-                // 确定规格关键词
-                var specs_keywords = [];
-                if (specs === "单个") {
-                    specs_keywords = ["单个", "盲盒"];
-                } else if (specs === "整端") {
-                    specs_keywords = ["整盒", "整端"];
                 } else {
-                    specs_keywords = [specs];
+//                        console.info("未找到在第" + currentSelectNumber + "个选择区域(" + selectElement.text + ")下面的购买方式或选择规格");
                 }
+            }
+
+            //console.info("[并行选择] 扫描完成 - 购买方式元素: " + purchase_elements.length + " 个, 规格元素: " + specs_elements.length + " 个");
+
+            // 并行处理购买方式选择
+            if (purchase_type != '来回刷') {
+                console.info("[并行选择] 处理购买方式: " + purchase_type);
 
                 // 方法1: 从扫描结果中快速匹配
-                for (var i = 0; i < specs_elements.length; i++) {
-                    var element = specs_elements[i];
-                    for (var j = 0; j < specs_keywords.length; j++) {
-                        var keyword = specs_keywords[j];
-                        if (element.text.includes(keyword)) {
-                            specs_btn = element.element;
-                            specs_found_method = "扫描匹配";
-                            console.info("[并行选择] 规格扫描匹配成功: " + element.text);
-                            break;
-                        }
+                for (var i = 0; i < purchase_elements.length; i++) {
+                    var element = purchase_elements[i];
+                    if (element.text.includes(purchase_type)) {
+                        purchase_type_btn = element.element;
+                        purchase_found_method = "扫描匹配";
+                        //console.info("[并行选择] 购买方式扫描匹配成功: " + element.text);
+                        break;
                     }
-                    if (specs_btn) break;
                 }
 
                 // 方法2: 如果扫描没找到，使用传统方法
-                if (!specs_btn) {
-                    for (var i = 0; i < specs_keywords.length; i++) {
-                        var keyword = specs_keywords[i];
-                        specs_btn = current_webview.findOne(text(keyword).algorithm('DFS'));
-                        if (specs_btn) {
-                            specs_found_method = "精确匹配";
-                            break;
-                        }
-                        specs_btn = current_webview.findOne(textMatches(".*" + keyword + ".*").algorithm('DFS'));
-                        if (specs_btn) {
-                            specs_found_method = "包含匹配";
-                            break;
+                if (!purchase_type_btn) {
+                    purchase_type_btn = current_webview.findOne(text(purchase_type).algorithm('DFS'));
+                    if (purchase_type_btn) {
+                        purchase_found_method = "精确匹配";
+                    } else {
+                        purchase_type_btn = current_webview.findOne(textStartsWith(purchase_type).algorithm('DFS'));
+                        if (purchase_type_btn) {
+                            purchase_found_method = "模糊匹配";
                         }
                     }
                 }
+            }
 
-                // 并行执行点击操作
-                console.info("[并行选择] 开始执行点击操作...");
+            // 并行处理规格选择
+            //console.info("[并行选择] 处理规格: " + specs);
 
-                // 点击选择项
-//                console.info("需要点击的选择项数量: " + selectOptionsToClick.length);
-                for (var i = 0; i < selectOptionsToClick.length; i++) {
-                    var selectOption = selectOptionsToClick[i];
-                    console.info("[并行选择] 点击选择项: 第" + selectOption.selectAreaNumber + "个选择区域(" + selectOption.selectArea + ")中的第" + selectOption.optionIndex + "个选项 - " + selectOption.optionText);
-                    try {
-                        selectOption.element.click();
-//                        console.info("[并行选择] 选择项点击成功: " + selectOption.optionText);
-                    } catch (e) {
-                        console.error("[并行选择] 选择项点击失败: " + selectOption.optionText + ", 错误: " + e.message);
-                        try {
-                            var bounds = selectOption.element.bounds();
-                            click(bounds.centerX(), bounds.centerY());
-                            console.info("[并行选择] 选择项坐标点击成功: " + selectOption.optionText);
-                        } catch (e2) {
-//                            console.error("[并行选择] 选择项坐标点击也失败: " + selectOption.optionText + ", 错误: " + e2.message);
-                        }
-                    }
+            // 确定规格关键词
+            var specs_keywords = [];
+            if (specs === "单个") {
+                specs_keywords = ["单个", "盲盒"];
+            } else if (specs === "整端") {
+                specs_keywords = ["整盒", "整端"];
+            } else {
+                specs_keywords = [specs];
+            }
+
+            // 方法1: 从扫描结果中快速匹配
+            for (var i = 0; i < specs_elements.length; i++) {
+                var element = specs_elements[i];
+                for (var j = 0; j < specs_keywords.length; j++) {
+                var keyword = specs_keywords[j];
+                if (element.text.includes(keyword)) {
+                    specs_btn = element.element;
+                    specs_found_method = "扫描匹配";
+                    //console.info("[并行选择] 规格扫描匹配成功: " + element.text);
+                    break;
                 }
-                // 点击购买方式
-                if (purchase_type_btn && purchase_type != '来回刷') {
-                    console.info("[并行选择] 点击购买方式，匹配方式: " + purchase_found_method);
-                    try {
-                        purchase_type_btn.click();
-                        console.info("[并行选择] 购买方式点击成功");
-                        log("已选择购买方式：" + purchase_type + " (匹配方式: " + purchase_found_method + ")");
-                    } catch (e) {
-                        console.error("[并行选择] 购买方式点击失败: " + e.message);
-                        try {
-                            var bounds = purchase_type_btn.bounds();
-                            click(bounds.centerX(), bounds.centerY());
-                            console.info("[并行选择] 购买方式坐标点击成功");
-                        } catch (e2) {
-                            console.error("[并行选择] 购买方式坐标点击也失败: " + e2.message);
-                        }
-                    }
-                } else if (purchase_type != '来回刷') {
-                    console.warn("[并行选择] 未找到购买方式按钮: " + purchase_type);
-                }
+            }
+                if (specs_btn) break;
+            }
 
-                // 点击规格
-                if (specs_btn) {
-                    console.info("[并行选择] 点击规格，匹配方式: " + specs_found_method);
-                    try {
-                        specs_btn.click();
-                        console.info("[并行选择] 规格点击成功");
-                        log("已选择规格：" + specs + " (匹配方式: " + specs_found_method + ")");
-                    } catch (e) {
-                        console.error("[并行选择] 规格点击失败: " + e.message);
-                        try {
-                            var bounds = specs_btn.bounds();
-                            click(bounds.centerX(), bounds.centerY());
-                            console.info("[并行选择] 规格坐标点击成功");
-                        } catch (e2) {
-                            console.error("[并行选择] 规格坐标点击也失败: " + e2.message);
-                        }
-                    }
-                } else {
-                    console.warn("[并行选择] 未找到规格按钮: " + specs);
-                }
-
-                // 立即开始库存刷新，零延迟启动
-                var selectionEndTime = new Date().getTime();
-                console.info("[并行选择] 选择操作完成，立即开始库存刷新");
-
-                // 同步处理通知按钮点击，避免与库存刷新循环冲突
-                if (auto_click_notification) {
-                    clickNotifyBtn(); // 改为同步执行，避免线程冲突
-                }
-
-                var refreshTimeStart = new Date();
-                var current_selection = "到店取";
-
-                // 立即开始查找确定按钮，零延迟
-                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-
-                while (!confirm_btn && !rebuy_flag) {
-                    // max duration logic
-                    if (max_refresh_time > 0) {
-                        var currentTime = new Date();
-                        if ((currentTime - refreshTimeStart) > 1000 * 60 * max_refresh_time) {
-                            if (timeout_sleep_wait_time == 0) {
-                                script_status = 0;
-                                ui.post(() => {
-                                    w.end.attr('visibility', 'gone');
-                                    w.start.attr('visibility', 'visible');
-                                });
-                                var seconds = parseFloat((max_refresh_time * 60).toFixed(2));
-                                console.warn("[通知] 超过设定的库存最大连续刷新时长[", max_refresh_time, "]分钟(", seconds, "秒) ", "，脚本已停止");
-                            } else {
-                                console.warn("[通知] 超过设定的库存最大连续刷新时长[", max_refresh_time, "]分钟(", seconds, "秒) ", "，已设定睡眠时间:"+timeout_sleep_wait_time+"秒，脚本已暂停");
-                                sleep(timeout_sleep_wait_time * 1000);
-                                console.warn("[通知] 脚本暂停时间已过，脚本恢复");
-                                refreshTimeStart = new Date();
-                            }
-                        }
-                    }
-                    // script stop logic
-                    if (script_status == 0) {
-                        rebuy_flag = false;
-                        submit_flag = false;
-                        dc_streak = 0;
+            // 方法2: 如果扫描没找到，使用传统方法
+            if (!specs_btn) {
+                for (var i = 0; i < specs_keywords.length; i++) {
+                    var keyword = specs_keywords[i];
+                    specs_btn = current_webview.findOne(text(keyword).algorithm('DFS'));
+                    if (specs_btn) {
+                        specs_found_method = "精确匹配";
                         break;
                     }
-                    var check_start_time = new Date().getTime();
-                    var purchase_btn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+                    specs_btn = current_webview.findOne(textMatches(".*" + keyword + ".*").algorithm('DFS'));
+                    if (specs_btn) {
+                        specs_found_method = "包含匹配";
+                        break;
+                    }
+                }
+            }
 
-                    // refresh logic
-                    if (purchase_btn) {
-                        confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                        if (confirm_btn) {
-                            break;
-                        }
-                        // safe stock check logic
-                        if (!rage_stock_refresh_conf) {
-                            var sold_out = current_webview.findOne(text("已售罄").algorithm('DFS'));
-                            var refresh_retry = 0;
-                            var timeout_flag = false;
-                            console.error("正在判断库存情况...");
-                            while (!sold_out) {
-                                refresh_retry++;
-                                if (refresh_retry > 30) {
-                                    timeout_flag = true;
-                                    break;
-                                }
-                                sold_out = current_webview.findOne(text("已售罄").algorithm('DFS'));
-                                if (sold_out) {
-                                    break;
-                                }
-                                sleep(fast_mode_check_interval); // 使用快速模式检查间隔
-                                confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                                if (confirm_btn) {
-                                    break;
-                                }
-                                if (script_status == 0) {
-                                    rebuy_flag = false;
-                                    submit_flag = false;
-                                    dc_streak = 0;
-                                    break;
-                                }
-                            }
-                            if (sold_out) {
-                                console.warn("已售罄");
-                            } else if (confirm_btn) {
-                                console.warn("有库存");
-                            }
+            // 并行执行点击操作
+            //console.info("[并行选择] 开始执行点击操作...");
 
-                            // refresh logic
-                            if (timeout_flag || sold_out) {
-                                if (sku_result_toast_conf) {
-                                    click_plus_btn(current_webview);
-                                }
-                                if (purchase_type != '来回刷') {
-                                    if (!rebuy_flag) {
-                                        purchase_btn.click();
-                                    }
+            // 点击选择项
+//                console.info("需要点击的选择项数量: " + selectOptionsToClick.length);
+            for (var i = 0; i < selectOptionsToClick.length; i++) {
+                var selectOption = selectOptionsToClick[i];
+                //console.info("[并行选择] 点击选择项: 第" + selectOption.selectAreaNumber + "个选择区域(" + selectOption.selectArea + ")中的第" + selectOption.optionIndex + "个选项 - " + selectOption.optionText);
+                try {
+                    selectOption.element.click();
+//                        console.info("[并行选择] 选择项点击成功: " + selectOption.optionText);
+                } catch (e) {
+                    console.error("[并行选择] 选择项点击失败: " + selectOption.optionText + ", 错误: " + e.message);
+                    try {
+                        var bounds = selectOption.element.bounds();
+                        click(bounds.centerX(), bounds.centerY());
+                        console.info("[并行选择] 选择项坐标点击成功: " + selectOption.optionText);
+                    } catch (e2) {
+//                            console.error("[并行选择] 选择项坐标点击也失败: " + selectOption.optionText + ", 错误: " + e2.message);
+                    }
+                }
+            }
+            // 点击购买方式
+            if (purchase_type_btn && purchase_type != '来回刷') {
+                //console.info("[并行选择] 点击购买方式，匹配方式: " + purchase_found_method);
+                try {
+                    purchase_type_btn.click();
+                    //console.info("[并行选择] 购买方式点击成功");
+                    log("已选择购买方式：" + purchase_type + " (匹配方式: " + purchase_found_method + ")");
+                } catch (e) {
+                    console.error("[并行选择] 购买方式点击失败: " + e.message);
+                    try {
+                        var bounds = purchase_type_btn.bounds();
+                        click(bounds.centerX(), bounds.centerY());
+                        console.info("[并行选择] 购买方式坐标点击成功");
+                    } catch (e2) {
+                        console.error("[并行选择] 购买方式坐标点击也失败: " + e2.message);
+                    }
+                }
+            } else if (purchase_type != '来回刷') {
+                console.warn("[并行选择] 未找到购买方式按钮: " + purchase_type);
+            }
 
-                                } else {
-                                    var current_selection_btn = current_webview.findOne(text(current_selection).algorithm('DFS'));
-                                    if (current_selection_btn) {
-                                        current_selection_btn.click();
-                                        if (current_selection == '到店取') {
-                                            current_selection = '送到家';
-                                        } else {
-                                            current_selection = '到店取';
-                                        }
-                                        sleep(50);
-                                    }
-                                }
-                            }
+            // 点击规格
+            if (specs_btn) {
+                console.info("[并行选择] 点击规格，匹配方式: " + specs_found_method);
+                try {
+                    specs_btn.click();
+                    console.info("[并行选择] 规格点击成功");
+                    log("已选择规格：" + specs + " (匹配方式: " + specs_found_method + ")");
+                } catch (e) {
+                    console.error("[并行选择] 规格点击失败: " + e.message);
+                    try {
+                        var bounds = specs_btn.bounds();
+                        click(bounds.centerX(), bounds.centerY());
+                        console.info("[并行选择] 规格坐标点击成功");
+                    } catch (e2) {
+                        console.error("[并行选择] 规格坐标点击也失败: " + e2.message);
+                    }
+                }
+            } else {
+                console.warn("[并行选择] 未找到规格按钮: " + specs);
+            }
+
+            // 立即开始库存刷新，零延迟启动
+            var selectionEndTime = new Date().getTime();
+            console.info("[并行选择] 选择操作完成，立即开始库存刷新");
+
+            // 同步处理通知按钮点击，避免与库存刷新循环冲突
+            if (auto_click_notification) {
+                clickNotifyBtn(); // 改为同步执行，避免线程冲突
+            }
+
+            var refreshTimeStart = new Date();
+            var current_selection = "到店取";
+
+            // 立即开始查找确定按钮，零延迟
+            var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+
+            while (!confirm_btn && !rebuy_flag) {
+                // max duration logic
+                if (max_refresh_time > 0) {
+                    var currentTime = new Date();
+                    if ((currentTime - refreshTimeStart) > 1000 * 60 * max_refresh_time) {
+                        if (timeout_sleep_wait_time == 0) {
+                            script_status = 0;
+                            ui.post(() => {
+                                w.end.attr('visibility', 'gone');
+                                w.start.attr('visibility', 'visible');
+                            });
+                            var seconds = parseFloat((max_refresh_time * 60).toFixed(2));
+                            console.warn("[通知] 超过设定的库存最大连续刷新时长[", max_refresh_time, "]分钟(", seconds, "秒) ", "，脚本已停止");
                         } else {
+                            console.warn("[通知] 超过设定的库存最大连续刷新时长[", max_refresh_time, "]分钟(", seconds, "秒) ", "，已设定睡眠时间:"+timeout_sleep_wait_time+"秒，脚本已暂停");
+                            sleep(timeout_sleep_wait_time * 1000);
+                            console.warn("[通知] 脚本暂停时间已过，脚本恢复");
+                            refreshTimeStart = new Date();
+                        }
+                    }
+                }
+                // script stop logic
+                if (script_status == 0) {
+                    rebuy_flag = false;
+                    submit_flag = false;
+                    dc_streak = 0;
+                    break;
+                }
+                var check_start_time = new Date().getTime();
+                var purchase_btn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+
+                // refresh logic
+                if (purchase_btn) {
+                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                    if (confirm_btn) {
+                        break;
+                    }
+                    // safe stock check logic
+                    if (!rage_stock_refresh_conf) {
+                        var sold_out = current_webview.findOne(text("已售罄").algorithm('DFS'));
+                        var refresh_retry = 0;
+                        var timeout_flag = false;
+                        console.error("正在判断库存情况...");
+                        while (!sold_out) {
+                            refresh_retry++;
+                            if (refresh_retry > 30) {
+                                timeout_flag = true;
+                                break;
+                            }
+                            sold_out = current_webview.findOne(text("已售罄").algorithm('DFS'));
+                            if (sold_out) {
+                                break;
+                            }
+                            sleep(fast_mode_check_interval); // 使用快速模式检查间隔
+                            confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                            if (confirm_btn) {
+                                break;
+                            }
+                            if (script_status == 0) {
+                                rebuy_flag = false;
+                                submit_flag = false;
+                                dc_streak = 0;
+                                break;
+                            }
+                        }
+                        if (sold_out) {
+                            console.warn("已售罄");
+                        } else if (confirm_btn) {
+                            console.warn("有库存");
+                        }
+
+                        // refresh logic
+                        if (timeout_flag || sold_out) {
+                            if (sku_result_toast_conf) {
+                                click_plus_btn(current_webview);
+                            }
                             if (purchase_type != '来回刷') {
                                 if (!rebuy_flag) {
                                     purchase_btn.click();
                                 }
+
                             } else {
                                 var current_selection_btn = current_webview.findOne(text(current_selection).algorithm('DFS'));
                                 if (current_selection_btn) {
@@ -2413,109 +2835,185 @@ while (true) {
                                 }
                             }
                         }
-
-                    }
-
-                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                    if (confirm_btn) {
-                        break;
-                    }
-                    // 优化刷新延迟计算
-                    var random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
-                    if (enable_random_delay_conf) {
-                        random_delay = 0;
-                    }
-
-                    var sleepTarget = refresh_delay + random_delay;
-                    sleep(sleepTarget);
-                    // 在等待前先快速检查一次确定按钮
-                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-                    if (confirm_btn) break;
-
-
-                    purchase_count_label = current_webview.findOne(text("数量").algorithm('DFS'));
-                    if (!purchase_count_label) {
-                        break;
-                    }
-
-                    console.info("[注意] 库存刷新耗时: ", sleepTarget + 50, "ms");
-                    if (confirm_btn) {
-                        break;
-                    }
-
-                }
-                if (script_status == 0) {
-                    continue;
-                }
-                var purchase_count_text = current_webview.findOne(text("数量").algorithm('DFS'));
-                if (purchase_count_text) {
-                    satisfyPurchaseCount(current_webview, purchase_count);
-                    log("已满足购买数量要求: ", purchase_count);
-                }
-            }
-
-            confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-            // add retry count if not confirm_btn found for like 10 times, then disable the rebuy_flag
-            if (confirm_btn) {
-                confirm_btn_retry_count = 0;
-                if (ignore_ack_conf) {
-                    var now = new Date().getTime();
-                    var elapsed = now - last_double_confirm_time;
-                    if (elapsed >= special_confirm_delay) {
-                        console.warn("[操作] 找到确认按钮，点击");
-                        confirm_btn.click();
-                        sleep(special_confirm_delay);
-                        rebuy_flag = true;
-                        ignore_next_purchase_page_flag = true;
                     } else {
-                        console.warn("[等待] 为防止反复被打回， 等待", special_confirm_delay - elapsed, "ms后点击确认");
-                        sleep(special_confirm_delay - elapsed);
-                        confirm_btn.click();
-                        rebuy_flag = true;
-                        ignore_next_purchase_page_flag = true;
+                        if (purchase_type != '来回刷') {
+                            if (!rebuy_flag) {
+                                purchase_btn.click();
+                            }
+                        } else {
+                            var current_selection_btn = current_webview.findOne(text(current_selection).algorithm('DFS'));
+                            if (current_selection_btn) {
+                                current_selection_btn.click();
+                                if (current_selection == '到店取') {
+                                    current_selection = '送到家';
+                                } else {
+                                    current_selection = '到店取';
+                                }
+                                sleep(50);
+                            }
+                        }
                     }
+
+                }
+
+                confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                if (confirm_btn) {
+                    break;
+                }
+                // 优化刷新延迟计算
+                var random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
+                if (enable_random_delay_conf) {
+                    random_delay = 0;
+                }
+
+                var sleepTarget = refresh_delay + random_delay;
+                sleep(sleepTarget);
+                // 在等待前先快速检查一次确定按钮
+                confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                if (confirm_btn) break;
+
+
+                purchase_count_label = current_webview.findOne(text("数量").algorithm('DFS'));
+                if (!purchase_count_label) {
+                    break;
+                }
+
+                console.info("[注意] 库存刷新耗时: ", sleepTarget + 50, "ms");
+                if (confirm_btn) {
+                    break;
+                }
+
+            }
+            if (script_status == 0) {
+                continue;
+            }
+            var purchase_count_text = current_webview.findOne(text("数量").algorithm('DFS'));
+            if (purchase_count_text) {
+                satisfyPurchaseCount(current_webview, purchase_count);
+                log("已满足购买数量要求: ", purchase_count);
+            }
+        }
+
+        confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+        // add retry count if not confirm_btn found for like 10 times, then disable the rebuy_flag
+        if (confirm_btn) {
+            confirm_btn_retry_count = 0;
+            if (ignore_ack_conf) {
+                var now = new Date().getTime();
+                var elapsed = now - last_double_confirm_time;
+                if (elapsed >= special_confirm_delay) {
+                    console.warn("[操作] 找到确定按钮");
+                    confirm_btn.click();
+                    sleep(special_confirm_delay + 50);
+
+                    // === 关键改动：立即启动支付线程 (参考 JS_hongzhong.js) ===
+                    // 先清理旧线程，确保只有一个支付线程运行
+                    if (paymentThread && paymentThread.isAlive()) {
+                        paymentThread.interrupt();
+                        //console.info("[线程管理] 中断旧支付线程");
+                    }
+
+                    isRunning = true;
+                    paymentStartFlag = true;
+                    paymentThread = threads.start(startPaymentProcess);
+                    //console.info("=== 支付线程已启动 ===");
+
+                    rebuy_flag = true;
+                    ignore_next_purchase_page_flag = true;
                 } else {
-                    var now = new Date().getTime();
-                    var elapsed = now - last_confirm_time;
-                    if (elapsed >= 450) {
-                        last_confirm_time = now;
-                        confirm_btn.click();
-                        rebuy_flag = true;
-                        ignore_next_purchase_page_flag = true;
+                    console.warn("[等待] 为防止反复被打回，等待", special_confirm_delay - elapsed, "ms后点击确定");
+                    sleep(special_confirm_delay - elapsed);
+                    confirm_btn.click();
+
+                    // === 同样启动支付线程 ===
+                    // 先清理旧线程，确保只有一个支付线程运行
+                    if (paymentThread && paymentThread.isAlive()) {
+                        paymentThread.interrupt();
+                        //console.info("[线程管理] 中断旧支付线程");
                     }
+
+                    isRunning = true;
+                    paymentStartFlag = true;
+                    paymentThread = threads.start(startPaymentProcess);
+                    //console.info("=== 支付线程已启动 (延迟模式) ===");
+
                     rebuy_flag = true;
                     ignore_next_purchase_page_flag = true;
                 }
-                sleep(50 + extra_delay);
             } else {
-                confirm_btn_retry_count++;
-                if (confirm_btn_retry_count >= 10) {
-                    confirm_btn_retry_count = 0;
-                    rebuy_flag = false;
-                    submit_flag = false;
-                    dc_streak = 0;
-                    ignore_next_purchase_page_flag = false;
-                    break;
+                var now = new Date().getTime();
+                var elapsed = now - last_confirm_time;
+                if (elapsed >= 450) {
+                    last_confirm_time = now;
+                    confirm_btn.click();
+
+                    // === 支付线程启动 ===
+                    // 先清理旧线程，确保只有一个支付线程运行
+                    if (paymentThread && paymentThread.isAlive()) {
+                        paymentThread.interrupt();
+                        //console.info("[线程管理] 中断旧支付线程");
+                    }
+
+                    isRunning = true;
+                    paymentStartFlag = true;
+                    paymentThread = threads.start(startPaymentProcess);
+                    //console.log("=== 支付线程已启动 (备用模式) ===");
+
+                    rebuy_flag = true;
+                    ignore_next_purchase_page_flag = true;
                 }
+                rebuy_flag = true;
+                ignore_next_purchase_page_flag = true;
             }
-            break;
+            sleep(50 + extra_delay);
+        } else {
+            confirm_btn_retry_count++;
+            if (confirm_btn_retry_count >= 10) {
+                confirm_btn_retry_count = 0;
+                rebuy_flag = false;
+                submit_flag = false;
+                dc_streak = 0;
+                ignore_next_purchase_page_flag = false;
+                break;
+            }
+        }
+        break;
         case "purchase_ready":
-            var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-            if (confirm_btn) {
-                confirm_btn.click();
+        var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+        if (confirm_btn) {
+            confirm_btn.click();
+        }
+        sleep(200);
+        break;
+        case "back":
+            back();
+            if (className('android.widget.TextView').text('确定').exists() == true) {
+                console.info("找到 确认 按钮");
+                if (paymentThread && paymentThread.isAlive()) {
+                    console.info("payment thread is alive");
+                    paymentThread.interrupt();
+                    //console.info("[线程管理] 中断旧支付线程");
+                }
+
+                isRunning = true;
+                paymentStartFlag = true;
+                paymentThread = threads.start(startPaymentProcess);
             }
-            sleep(200);
             break;
+
+        break;
         case "default":
-            // Default logic
-            break;
+        // Default logic
+        break;
         case "no_webview":
-            //log("No current webview found");
-            break;
+        //log("No current webview found");
+        break;
         default:
-            //log("Unknown status: ");
-            break;
+        //log("Unknown status: ");
+        break;
     }
     // 在页面状态切换时重置hasClickedConfirmAndPay
 }
+
+
 
