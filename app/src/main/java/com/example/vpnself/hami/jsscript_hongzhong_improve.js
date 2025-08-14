@@ -2956,6 +2956,18 @@ while (true) {
         break;
         case "back":
             back();
+            if (className('android.widget.TextView').text('确定').exists() == true) {
+                console.info("找到 确认 按钮");
+                if (paymentThread && paymentThread.isAlive()) {
+                    console.info("payment thread is alive");
+                    paymentThread.interrupt();
+                    //console.info("[线程管理] 中断旧支付线程");
+                }
+
+                isRunning = true;
+                paymentStartFlag = true;
+                paymentThread = threads.start(startPaymentProcess);
+            }
             break;
 
         break;

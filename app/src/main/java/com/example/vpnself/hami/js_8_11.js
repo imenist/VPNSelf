@@ -107,6 +107,11 @@ var paymentCompleted = false; // 支付是否完成
 var lastPaymentPageDetectTime = 0; // 上次检测到支付页面的时间
 var paymentProcessStartTime = 0; // 支付处理开始时间
 
+// === 支付线程执行计数器 ===
+var paymentProcessAttemptCount = 0; // 支付线程执行次数
+var paymentProcessMaxAttempts = 3; // 最大尝试次数
+var useCoordinateClickForConfirm = false; // 是否使用坐标点击确定按钮
+
 
 // === 坐标缓存系统 (参考 JS_hongzhong.js) ===
 var cached_confirm_info_coords = null; // 缓存"确认信息并支付"按钮坐标
@@ -338,6 +343,11 @@ function start() {
     script_status = 1;
     start_time = new Date().getTime();
     script_start_time = new Date().getTime(); // 记录脚本启动时间用于定时器
+
+    // === 重置支付线程执行计数器 ===
+    paymentProcessAttemptCount = 0;
+    useCoordinateClickForConfirm = false;
+
     w.end.attr('visibility', 'visible');
 
     // 显示定时器信息
@@ -925,6 +935,28 @@ function clickByCoordinates(buttonType) {
 
     } catch (e) {
         console.error('[点击] 缓存点击失败: ' + e);
+        return false;
+    }
+}
+
+// 获取确定按钮坐标并点击
+function clickConfirmButtonByCoordinates(confirm_btn) {
+    try {
+        if (!confirm_btn) {
+            //console.warn("[坐标点击] 确定按钮为空，无法获取坐标");
+            return false;
+        }
+
+        var bounds = confirm_btn.bounds();
+        var centerX = bounds.centerX();
+        var centerY = bounds.centerY();
+
+        console.info("[点击] 激活确定按钮XY");
+        press(centerX, centerY, 20); // 使用20ms的短按
+        return true;
+
+    } catch (e) {
+        console.error('[点击] 激活确定按钮点击失败: ' + e);
         return false;
     }
 }
@@ -1939,6 +1971,10 @@ function startPaymentProcess() {
     paymentCompleted = false;
     paymentProcessStartTime = Date.now();
 
+    // === 增加执行计数器 ===
+    paymentProcessAttemptCount++;
+    //console.info("[支付线程] 第" + paymentProcessAttemptCount + "次执行支付流程");
+
     //console.info('[线程协调] 支付线程已接管页面处理，主线程暂停');
     //console.info('isRunning'+isRunning+'paymentThread:'+paymentThread+'!isInterrupted:'+!paymentThread.isInterrupted());
 
@@ -1979,8 +2015,11 @@ function startPaymentProcess() {
             var doubleConfirmClicked = false;
             var confirmInfoRetryCount = 0;
             var confirmInfoStartTime = Date.now();
+            var enteredWhileLoop = false; // 标记是否进入了while循环
 
             while (className('android.widget.TextView').text('确认订单').exists() == true) {
+                enteredWhileLoop = true; // 标记已进入while循环
+                paymentProcessAttemptCount = 0;
 //                console.log('文本：查找\'确认信息并支付\'按钮',1);
                 if(className('android.widget.TextView').text('确认信息并支付').exists()==true && !confirmInfoClicked){
                 	safeClickByText(className('android.widget.TextView'),'确认信息并支付');
@@ -2030,6 +2069,20 @@ function startPaymentProcess() {
 
             // 5. 如果没有找到任何相关按钮，短暂等待后继续
             sleep(50);
+
+            // === 检查是否进入while循环，决定是否启用坐标点击 ===
+            if (!enteredWhileLoop) {
+                //console.warn("[支付线程] 第" + paymentProcessAttemptCount + "次执行未进入确认订单页面循环");
+                if (paymentProcessAttemptCount >= paymentProcessMaxAttempts) {
+                    useCoordinateClickForConfirm = true;
+                    //console.error("[支付线程] 连续" + paymentProcessMaxAttempts + "次未进入确认订单页面，启用坐标点击确定按钮");
+                }
+            } else {
+                //console.info("[支付线程] 第" + paymentProcessAttemptCount + "次执行成功进入确认订单页面循环");
+                // 重置计数器，因为成功进入了while循环
+                paymentProcessAttemptCount = 0;
+                useCoordinateClickForConfirm = false;
+            }
 
             // 6. 检查是否已进入支付页面，设置submit_flag
             // 简化判定条件：离开确认订单页面且找不到webview_parent_node时设置支付标志
@@ -2254,7 +2307,7 @@ while (true) {
         ignore_next_purchase_page_flag = false;
         if (!rebuy_flag) {
             sleep(100);
-            var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+            var confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
             if (!confirm_btn) {
                 // 检查是否有"立即购买"按钮
                 var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
@@ -2362,7 +2415,7 @@ while (true) {
                     }
                 }
             } else {
-                var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                var confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
                 if (!confirm_btn) {
                     rebuy_flag = false;
                 }
@@ -2854,7 +2907,7 @@ while (true) {
             var current_selection = "到店取";
 
             // 立即开始查找确定按钮，零延迟
-            var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+            var confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
 
             while (!confirm_btn && !rebuy_flag) {
                 // max duration logic
@@ -2890,7 +2943,7 @@ while (true) {
 
                 // refresh logic
                 if (purchase_btn) {
-                    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                    confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
                     if (confirm_btn) {
                         break;
                     }
@@ -2911,7 +2964,7 @@ while (true) {
                                 break;
                             }
                             sleep(fast_mode_check_interval); // 使用快速模式检查间隔
-                            confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+                            confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
                             if (confirm_btn) {
                                 break;
                             }
@@ -3010,8 +3063,8 @@ while (true) {
                 log("已满足购买数量要求: ", purchase_count);
             }
         }
-
-        confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+        if (className('android.widget.TextView').text('确定').exists() == true) {
+        confirm_btn = className('android.widget.TextView').text('确定').findOne();
         // add retry count if not confirm_btn found for like 10 times, then disable the rebuy_flag
         if (confirm_btn) {
             confirm_btn_retry_count = 0;
@@ -3019,8 +3072,15 @@ while (true) {
                 var now = new Date().getTime();
                 var elapsed = now - last_double_confirm_time;
                 if (elapsed >= special_confirm_delay) {
-                    console.warn("[操作] 点击确定按钮1");
-                    confirm_btn.click();
+
+                    if (useCoordinateClickForConfirm) {
+                        clickConfirmButtonByCoordinates(confirm_btn);
+                        console.info("[操作] 点击确定按钮1.1");
+                        sleep(150);
+                    } else {
+                        confirm_btn.click();
+                        console.info("[操作] 点击确定按钮1");
+                    }
                     sleep(special_confirm_delay + 50);
 
                     // 先清理旧线程，确保只有一个支付线程运行
@@ -3039,7 +3099,14 @@ while (true) {
                 } else {
                     console.warn("[等待] 为防止反复被打回，等待", special_confirm_delay - elapsed, "ms后点击确定");
                     sleep(special_confirm_delay - elapsed);
-                    confirm_btn.click();
+                    if (useCoordinateClickForConfirm) {
+                        clickConfirmButtonByCoordinates(confirm_btn);
+                        console.info("[操作] 点击确定按钮2.1");
+                        sleep(150);
+                    } else {
+                        confirm_btn.click();
+                        console.info("[操作] 点击确定按钮2");
+                    }
 
                     // === 同样启动支付线程 ===
                     // 先清理旧线程，确保只有一个支付线程运行
@@ -3061,7 +3128,14 @@ while (true) {
                 var elapsed = now - last_confirm_time;
                 if (elapsed >= 450) {
                     last_confirm_time = now;
-                    confirm_btn.click();
+                    if (useCoordinateClickForConfirm) {
+                        clickConfirmButtonByCoordinates(confirm_btn);
+                        console.info("[操作] 点击确定按钮3.1");
+                        sleep(150);
+                    } else {
+                        confirm_btn.click();
+                        console.info("[操作] 点击确定按钮3");
+                    }
 
                     // === 支付线程启动 ===
                     // 先清理旧线程，确保只有一个支付线程运行
@@ -3097,13 +3171,23 @@ while (true) {
                 break;
             }
         }
+        }
         break;
         case "purchase_ready":
-        var confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
+        if (className('android.widget.TextView').text('确定').exists() == true) {
+        var confirm_btn = className('android.widget.TextView').text('确定').findOne();
         if (confirm_btn) {
-            confirm_btn.click();
+            if (useCoordinateClickForConfirm) {
+                clickConfirmButtonByCoordinates(confirm_btn);
+                console.info("[操作] 点击确定按钮1.31");
+                sleep(150);
+            } else {
+                confirm_btn.click();
+                console.info("[操作] 点击确定按钮1.3");
+            }
         }
-        sleep(200);
+        }
+
         break;
         case "back":
             back();
@@ -3111,8 +3195,14 @@ while (true) {
             if (className('android.widget.TextView').text('确定').exists() == true) {
                 var confirmBtn = className('android.widget.TextView').text('确定').findOne();
                 if (confirmBtn) {
-                    confirmBtn.click();
-                    console.warn("[操作] 点击确定按钮1.2");
+                    if (useCoordinateClickForConfirm) {
+                        clickConfirmButtonByCoordinates(confirmBtn);
+                        console.warn("[操作] 点击确定按钮1.21");
+                        sleep(150);
+                    } else {
+                        confirmBtn.click();
+                        console.warn("[操作] 点击确定按钮1.2");
+                    }
                     sleep(special_confirm_delay + 50);; // 等待点击响应
                 }
 
@@ -3136,8 +3226,14 @@ while (true) {
             // 点击确认按钮
             var confirmBtn = className('android.widget.TextView').text('确定').findOne();
             if (confirmBtn) {
-                confirmBtn.click();
-                console.warn("[操作] 点击确定按钮1.2");
+                if (useCoordinateClickForConfirm) {
+                    clickConfirmButtonByCoordinates(confirmBtn);
+                    console.warn("[操作] 点击确定按钮1.31");
+                    sleep(150);
+                } else {
+                    confirmBtn.click();
+                    console.warn("[操作] 点击确定按钮1.3");
+                }
                 sleep(special_confirm_delay + 50);; // 等待点击响应
             }
 
