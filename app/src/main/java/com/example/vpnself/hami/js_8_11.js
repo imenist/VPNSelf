@@ -945,86 +945,102 @@ function clickByCoordinates(buttonType) {
     }
 }
 
+// 防重复点击的全局变量
+var lastPageCloseRefreshTime = 0;
+var pageCloseRefreshCooldown = 1000;
+
 //点击x关闭方式来刷新
 function pageCloseRefresh() {
-    var allImages = current_webview.find(className("android.widget.Image").algorithm('DFS'));
-    console.info("找到Image总数量: " + allImages.length);
+    // 防重复点击检查
+    var currentTime = Date.now();
+    if (currentTime - lastPageCloseRefreshTime < pageCloseRefreshCooldown) {
+        console.warn("⏰ 页面刷新冷却中，跳过本次调用（距离上次 " + (currentTime - lastPageCloseRefreshTime) + "ms）");
+        return;
+    }
     
-    // 获取屏幕宽度
-    var screenWidth = device.width;
-    var rightHalfStart = screenWidth / 2; // 屏幕右半边起始位置
-    console.info("屏幕宽度: " + screenWidth + ", 右半边起始位置: " + rightHalfStart);
+    lastPageCloseRefreshTime = currentTime;
+    console.info("开始搜索关闭按钮...");
     
-    var candidateImages = []; // 候选的关闭按钮
-    var targetDepth = 23; // 目标深度
+    // 第一步：找到indexInParent=2的android.view.View容器
+    var allViews = current_webview.find(className("android.view.View").algorithm('DFS'));
+    console.info("找到View总数量: " + allViews.length);
     
-    // 遍历所有Image控件
-    for (var i = 0; i < allImages.length; i++) {
+    var targetContainer = null;
+    var targetIndex = 2; // indexInParent = 2
+    
+    for (var i = 0; i < allViews.length; i++) {
         try {
-            var image = allImages[i];
+            var view = allViews[i];
+            if (view && view.indexInParent() === targetIndex) {
+                var bounds = view.bounds();
+                console.info("找到indexInParent=2的View[" + i + "] 坐标:(" + bounds.left + "," + bounds.top + "," + bounds.right + "," + bounds.bottom + ")");
+                targetContainer = view;
+                break;
+            }
+        } catch (e) {
+            // 忽略错误
+        }
+    }
+    
+
+    var containerBounds = targetContainer.bounds();
+    var containerImages = targetContainer.find(className("android.widget.Image").algorithm('DFS'));
+    console.info("容器内找到Image数量: " + containerImages.length);
+    
+    var bestImage = null;
+    var maxRight = 0; // 找最右边的Image
+    var maxTop = containerBounds.bottom; // 找最上面的Image
+    
+    for (var j = 0; j < containerImages.length; j++) {
+        try {
+            var image = containerImages[j];
             if (image) {
-                var bounds = image.bounds();
-                var depth = image.depth(); // 获取控件深度
+                var imgBounds = image.bounds();
+                console.info("容器内Image[" + j + "] 坐标:(" + imgBounds.left + "," + imgBounds.top + "," + imgBounds.right + "," + imgBounds.bottom + ")");
                 
-                // 检查深度是否为23
-                if (depth === targetDepth) {
-                    console.info("找到Image[" + i + "] 坐标:(" + bounds.left + "," + bounds.top + "," + bounds.right + "," + bounds.bottom + ") depth:" + depth);
-
-                    // 检查是否在屏幕右半边
-                    if (bounds.left >= rightHalfStart) {
-                        candidateImages.push({
-                            index: i,
-                            element: image,
-                            bounds: bounds,
-                            depth: depth,
-                            // 计算与用户提供的参考坐标的相似度
-                            similarity: calculatePositionSimilarity(bounds, 978, 478, 1036, 536)
-                        });
-
-                    }
+                // 选择最右上角的Image（x坐标最大，y坐标最小）
+                if (imgBounds.right >= maxRight && imgBounds.top <= maxTop) {
+                    maxRight = imgBounds.right;
+                    maxTop = imgBounds.top;
+                    bestImage = image;
+                    console.info("🎯 更新最佳候选Image[" + j + "] 右边界:" + maxRight + " 上边界:" + maxTop);
                 }
             }
         } catch (e) {
-            // 忽略单个控件错误
+            // 忽略错误
         }
     }
 
-    // 选择最合适的候选按钮（坐标最相似的）
-    if (candidateImages.length > 0) {
-        // 按相似度排序，选择最相似的
-        candidateImages.sort(function(a, b) {
-            return b.similarity - a.similarity;
-        });
-
-        var bestCandidate = candidateImages[0];
-        console.info("选择最佳候选按钮Image[" + bestCandidate.index + "] 相似度:" + bestCandidate.similarity.toFixed(2));
-
+    if (bestImage) {
+        var imgBounds = bestImage.bounds();
+        console.info("Image坐标:(" + imgBounds.left + "," + imgBounds.top + "," + imgBounds.right + "," + imgBounds.bottom + ")");
+        console.info("容器坐标:(" + containerBounds.left + "," + containerBounds.top + "," + containerBounds.right + "," + containerBounds.bottom + ")");
+        
+        // 确保点击坐标在容器范围内，点击容器右上角区域
+        var clickX = containerBounds.right - 50; // 容器右边界内50像素
+        var clickY = containerBounds.top + 50; // 容器上边界下50像素
+        
+        console.info("准备点击容器右上角区域（往左下50像素）...");
+        
         try {
-            bestCandidate.element.click();
-            console.info("成功点击关闭按钮Image[" + bestCandidate.index + "]");
+            console.info("尝试点击坐标:(" + clickX + "," + clickY + ")");
+            click(clickX, clickY);
+            console.info("✅ 成功点击容器右上角坐标");
         } catch (e) {
-            console.warn("直接点击失败，尝试坐标点击: " + e.message);
-            try {
-                var centerX = bestCandidate.bounds.centerX();
-                var centerY = bestCandidate.bounds.centerY();
-                click(centerX, centerY);
-                console.info("坐标点击关闭按钮Image[" + bestCandidate.index + "]成功");
-            } catch (e2) {
-                console.error("坐标点击也失败: " + e2.message);
-            }
+            console.error("坐标点击失败: " + e.message);
         }
     } else {
-        console.warn("未找到符合条件的关闭按钮");
-        for (var j = 0; j < allImages.length; j++) {
-            try {
-                var img = allImages[j];
-                if (img && img.depth() === targetDepth) {
-                    var b = img.bounds();
-                    console.info("Image[" + j + "] 坐标:(" + b.left + "," + b.top + "," + b.right + "," + b.bottom + ")");
-                }
-            } catch (e) {
-                // 忽略错误
-            }
+        // 容器内没找到Image，点击容器的右上角区域
+        console.warn("容器内未找到Image，点击容器右上角区域");
+        var containerRightX = containerBounds.right - 20; // 离容器右边界20像素
+        var containerTopY = containerBounds.top + 20; // 离容器上边界20像素
+        console.info("点击容器右上角坐标:(" + containerRightX + "," + containerTopY + ")");
+        
+        try {
+            click(containerRightX, containerTopY);
+            console.info("✅ 容器右上角坐标点击成功");
+        } catch (e) {
+            console.error("容器右上角坐标点击失败: " + e.message);
         }
     }
 }
@@ -2315,6 +2331,9 @@ while (true) {
         tried_clicked_confirm_to_pay_page_count = 0;
         submited_refresh_flag = false;
         submited_refresh_count = 0;
+        
+        // 重置页面刷新相关标志位
+        lastPageCloseRefreshTime = 0;
 
         // 新增：支付线程清理 (参考 JS_hongzhong.js)
         paymentStartFlag = false;
@@ -3414,6 +3433,3 @@ while (true) {
     }
     // 在页面状态切换时重置hasClickedConfirmAndPay
 }
-
-
-
