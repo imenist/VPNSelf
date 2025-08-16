@@ -41,6 +41,7 @@ const {
     hide_sleep_time_conf,
     select_index_conf,
     anti_rebound_mode, //防回弹设置
+    page_fresh_sleep_conf,
 } = hamibot.env;
 const { onFreeTrial } = hamibot.plan;
 
@@ -76,6 +77,7 @@ var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 0;
 var special_confirm_delay = parseInt(special_confirm_delay_conf) || 400;
 var ignore_ack_conf = true;
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
+var page_fresh_sleep = parseInt(page_fresh_sleep_conf) || 300;
 
 // 定时器配置 - 脚本自动结束时间（分钟）
 var script_auto_exit_time_conf = hamibot.env.script_auto_exit_time_conf;
@@ -261,6 +263,13 @@ function updateStorage() {
     if (s_special_confirm_delay !== null && s_special_confirm_delay !== undefined && s_special_confirm_delay !== '') {
         special_confirm_delay = parseInt(s_special_confirm_delay);
         console.info("[本地读取参数更新] 确定按钮后点击后等待时间: " + special_confirm_delay + "ms");
+    }
+    
+    // 页面刷等待时间的本地读取
+    var s_page_fresh_sleep = storage.get("s_page_fresh_sleep");
+    if (s_page_fresh_sleep !== null && s_page_fresh_sleep !== undefined && s_page_fresh_sleep !== '') {
+        page_fresh_sleep = parseInt(s_page_fresh_sleep);
+        console.info("[本地读取参数更新] 页面刷关闭页面等待页面相应时间: " + page_fresh_sleep + "ms");
     }
 
     // 检查并加载确认信息按钮坐标到全局变量
@@ -577,6 +586,22 @@ var settingsConfig = {
     console.error("[本地参数更新(优先本地)] 点击确定按钮后等待时间:" + num + "ms");
 }
 },
+    '页面刷关闭页面等待页面相应时间(ms)': {
+        type: 'input',
+        inputType: 'number',
+        value: () => page_fresh_sleep.toString(),
+        setValue: (val) => {
+        var num = parseInt(val);
+        var min = 100; // 最小值限制
+        if (isNaN(num) || num < min) {
+            num = min;
+            toast('最低设置值为' + min + 'ms');
+        }
+        page_fresh_sleep = num;
+        storage.put('s_page_fresh_sleep', num);
+        console.error("[本地参数更新(优先本地)] 页面刷关闭页面等待页面相应时间:" + num + "ms");
+    }
+    },
     '支付密码': {
     type: 'input',
     inputType: 'text',
@@ -1050,7 +1075,7 @@ function pageCloseRefresh() {
     }
     
     // 等待页面加载
-    sleep(300);
+    sleep(page_fresh_sleep);
     
     // 检查是否已有缓存的坐标
     if (cached_buy_now_coords) {
