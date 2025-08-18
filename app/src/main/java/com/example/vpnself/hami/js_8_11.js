@@ -1010,11 +1010,9 @@ function pageCloseRefresh() {
     }
 
     lastPageCloseRefreshTime = currentTime;
-   // console.info("开始搜索关闭按钮...");
 
     // 第一步：找到indexInParent=2的android.view.View容器
     var allViews = current_webview.find(className("android.view.View").algorithm('DFS'));
-    //console.info("找到View总数量: " + allViews.length);
 
     var targetContainer = null;
     var targetIndex = 2; // indexInParent = 2
@@ -1047,14 +1045,12 @@ function pageCloseRefresh() {
             var image = containerImages[j];
             if (image) {
                 var imgBounds = image.bounds();
-              //  console.info("容器内Image[" + j + "] 坐标:(" + imgBounds.left + "," + imgBounds.top + "," + imgBounds.right + "," + imgBounds.bottom + ")");
 
                 // 选择最右上角的Image（x坐标最大，y坐标最小）
                 if (imgBounds.right >= maxRight && imgBounds.top <= maxTop) {
                     maxRight = imgBounds.right;
                     maxTop = imgBounds.top;
                     bestImage = image;
-                  //  console.info("🎯 更新最佳候选Image[" + j + "] 右边界:" + maxRight + " 上边界:" + maxTop);
                 }
             }
         } catch (e) {
@@ -1064,19 +1060,13 @@ function pageCloseRefresh() {
 
     if (bestImage) {
         var imgBounds = bestImage.bounds();
-      //  console.info("Image坐标:(" + imgBounds.left + "," + imgBounds.top + "," + imgBounds.right + "," + imgBounds.bottom + ")");
-       // console.info("容器坐标:(" + containerBounds.left + "," + containerBounds.top + "," + containerBounds.right + "," + containerBounds.bottom + ")");
 
         // 确保点击坐标在容器范围内，点击容器右上角区域
         var clickX = containerBounds.right - 50; // 容器右边界内50像素
         var clickY = containerBounds.top + 50; // 容器上边界下50像素
 
-      //  console.info("准备点击容器右上角区域（往左下50像素）...");
-
         try {
-          //  console.info("尝试点击坐标:(" + clickX + "," + clickY + ")");
             click(clickX, clickY);
-         //   console.info("✅ 成功点击容器右上角坐标");
         } catch (e) {
          //   console.error("坐标点击失败: " + e.message);
         }
@@ -1089,9 +1079,8 @@ function pageCloseRefresh() {
 
         try {
             click(containerRightX, containerTopY);
-         //   console.info("✅ 容器右上角坐标点击成功");
         } catch (e) {
-         //   console.error("容器右上角坐标点击失败: " + e.message);
+
         }
     }
 
@@ -1111,71 +1100,6 @@ function pageCloseRefresh() {
             buyNowBtn.click();
             console.info("点击立即购买按钮");
             sleep(400);
-        }
-    }
-    if (cached_buy_now_coords) {
-        //console.info("[页面刷] 使用缓存的'立即购买'按钮坐标: (" + cached_buy_now_coords.x + ", " + cached_buy_now_coords.y + ")");
-        try {
-            click(cached_buy_now_coords.x, cached_buy_now_coords.y);
-            console.info("[页面刷] ✅ 成功使用缓存坐标点击'立即购买'按钮");
-        } catch (e) {
-         //   console.error("[页面刷] 缓存坐标点击'立即购买'按钮失败: " + e.message);
-        }
-        return;
-    }
-
-    // 首次获取坐标：重新获取当前webview并查找按钮
-   // console.info("[页面刷] 首次获取'立即购买'按钮坐标");
-    var webview_parent_node = get_webview_parent_node();
-    if (!webview_parent_node) {
-      //  console.warn("[页面刷] 无法获取webview_parent_node，退出");
-        return;
-    }
-
-    var current_node = get_current_node(webview_parent_node);
-    if (!current_node) {
-      //  console.warn("[页面刷] 无法获取current_node，退出");
-        return;
-    }
-
-    var updated_webview = get_current_webview_fast(current_node);
-    if (!updated_webview) {
-      //  console.warn("[页面刷] 无法获取更新后的webview，退出");
-        return;
-    }
-
-    // 查找立即购买按钮
-    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
-    if (!buyNowBtn) {
-      //  console.warn("[页面刷] 未找到'立即购买'按钮，退出");
-        return;
-    }
-
-    // 获取并缓存坐标
-    var bounds = buyNowBtn.bounds();
-    cached_buy_now_coords = {
-        x: bounds.centerX(),
-        y: bounds.centerY(),
-        left: bounds.left,
-        top: bounds.top,
-        right: bounds.right,
-        bottom: bounds.bottom
-    };
-
-   // console.info("[页面刷] 获取并缓存'立即购买'按钮坐标: (" + cached_buy_now_coords.x + ", " + cached_buy_now_coords.y + ")");
-
-    // 使用坐标点击
-    try {
-        click(cached_buy_now_coords.x, cached_buy_now_coords.y);
-      //  console.info("[页面刷] ✅ 成功使用坐标点击'立即购买'按钮");
-    } catch (e) {
-      //  console.error("[页面刷] 坐标点击'立即购买'按钮失败: " + e.message);
-        // 备用方案：直接元素点击
-        try {
-            buyNowBtn.click();
-       //     console.info("[页面刷] ✅ 备用方案成功点击'立即购买'按钮");
-        } catch (e2) {
-       //     console.error("[页面刷] 备用方案点击'立即购买'按钮也失败: " + e2.message);
         }
     }
 }
