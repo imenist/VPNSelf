@@ -1098,14 +1098,6 @@ function pageCloseRefresh() {
     sleep(sleepTarget - 100);
     console.info("[注意] 库存刷新耗时1 ",sleepTarget,"ms");
 
-    confirm_btn = current_webview.findOne(text("确定").algorithm('DFS'));
-    if (confirm_btn) {
-        return true; // 返回true表示找到确定按钮，需要跳出循环
-    }
-
-
-    // lastPageCloseRefreshTime = currentTime;
-   // console.info("开始搜索关闭按钮...");
     // 第一步：找到indexInParent=2的android.view.View容器
     // 重新获取最新的webview和Image元素
     var updated_webview = get_current_webview_fast(current_node);
@@ -1164,7 +1156,22 @@ function pageCloseRefresh() {
 
     //     return;
     // }
-    sleep(100);
+    sleep(200);
+
+    var webview_parent_node = get_webview_parent_node();
+    if (!webview_parent_node) {
+        return false;
+    }
+    var current_node = get_current_node(webview_parent_node);
+    if (!current_node) {
+        return false;
+    }
+    var updated_webview = get_current_webview_fast(current_node);
+    if (!updated_webview) {
+        console.warn("无法获取最新的页面元素");
+        return true;
+    }
+
     confirm_btn = updated_webview.findOne(text("确定").algorithm('DFS'));
     if (confirm_btn) {
         return true; // 返回true表示找到确定按钮，需要跳出循环
