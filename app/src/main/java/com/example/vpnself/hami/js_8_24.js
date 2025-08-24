@@ -1114,6 +1114,38 @@ function clickByCoordinates(buttonType) {
 }
 
 
+// === 确定按钮坐标缓存与点击助手 ===
+function cacheConfirmCoordsIfNeeded(node) {
+    try {
+        if (!cached_confirm_coords && node) {
+            var b = node.bounds();
+            cached_confirm_coords = [b.left, b.top, b.right, b.bottom];
+        }
+    } catch (e) {}
+}
+
+function pressConfirmUsingCachedCoords(fallbackNode) {
+    try {
+        if (!cached_confirm_coords && fallbackNode) {
+            cacheConfirmCoordsIfNeeded(fallbackNode);
+        }
+        if (cached_confirm_coords && cached_confirm_coords.length >= 4) {
+            var cx = cached_confirm_coords[0] + (cached_confirm_coords[2] - cached_confirm_coords[0]) / 2;
+            var cy = cached_confirm_coords[1] + (cached_confirm_coords[3] - cached_confirm_coords[1]) / 2;
+            press(cx, cy, 50);
+            return true;
+        }
+        if (fallbackNode) {
+            var b = fallbackNode.bounds();
+            press(b.centerX(), b.centerY(), 50);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        return false;
+    }
+}
+
 // 防重复点击的全局变量
 // var lastPageCloseRefreshTime = 0;
 // var pageCloseRefreshCooldown = 1000;
@@ -2631,6 +2663,7 @@ while (true) {
         purchasee_pagee_count = 0;
 
         // 重置页面刷新相关标志位
+        cached_confirm_coords = null;
         lastPageCloseRefreshTime = 0;
 
         // 新增：支付线程清理 (参考 JS_hongzhong.js)
@@ -3612,9 +3645,11 @@ while (true) {
                 if (Clickedcount <= 0) {
 
                     if (useCoordinateClickForConfirm) {
-                        press(confirm_btn.bounds().centerX(),confirm_btn.bounds().centerY(),50);
+                        cacheConfirmCoordsIfNeeded(confirm_btn);
+                        pressConfirmUsingCachedCoords(confirm_btn);
                         console.info("[操作] 点击确定按钮1.1");
                     } else {
+                        cacheConfirmCoordsIfNeeded(confirm_btn);
                         confirm_btn.click();
                         console.info("[操作] 点击确定按钮1");
                     }
@@ -3633,9 +3668,11 @@ while (true) {
                     console.warn("[等待] 为防止反复被打回，等待", 550, "ms后点击确定");
                     sleep(550);
                     if (useCoordinateClickForConfirm) {
-                        press(confirm_btn.bounds().centerX(),confirm_btn.bounds().centerY(),50);
+                        cacheConfirmCoordsIfNeeded(confirm_btn);
+                        pressConfirmUsingCachedCoords(confirm_btn);
                         console.info("[操作] 点击确定按钮1.1");
                     } else {
+                        cacheConfirmCoordsIfNeeded(confirm_btn);
                         confirm_btn.click();
                         console.info("[操作] 点击确定按钮1");
                     }
@@ -3657,9 +3694,11 @@ while (true) {
                 if (elapsed >= 450) {
                     last_confirm_time = now;
                     if (useCoordinateClickForConfirm) {
-                        press(confirm_btn.bounds().centerX(),confirm_btn.bounds().centerY(),50);
+                        cacheConfirmCoordsIfNeeded(confirm_btn);
+                        pressConfirmUsingCachedCoords(confirm_btn);
                         console.info("[操作] 点击确定按钮1.1");
                     } else {
+                        cacheConfirmCoordsIfNeeded(confirm_btn);
                         confirm_btn.click();
                         console.info("[操作] 点击确定按钮1");
                     }
@@ -3703,9 +3742,11 @@ while (true) {
         if (confirm_btn) {
             // 优先使用坐标点击，如果没有坐标则使用文本点击并记录坐标
             if (useCoordinateClickForConfirm) {
-                press(confirm_btn.bounds().centerX(),confirm_btn.bounds().centerY(),50);
+                cacheConfirmCoordsIfNeeded(confirm_btn);
+                pressConfirmUsingCachedCoords(confirm_btn);
                 console.info("[操作] 点击确定按钮1.1");
             } else {
+                cacheConfirmCoordsIfNeeded(confirm_btn);
                 confirm_btn.click();
                 console.info("[操作] 点击确定按钮1");
             }
