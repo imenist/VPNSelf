@@ -1,5 +1,5 @@
 // 文档地址：https://docs.hamibot.com/
-
+var scriptCode = "25.9.8Y"; //版本号 记得手动修改
 auto.waitFor()
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
@@ -1433,7 +1433,7 @@ function setVitaData() {
                             "【配置】这家/无误后时间": globalTextViewInfo[2],
                             "设备品牌": globalTextViewInfo[4],
                             "设备型号": globalTextViewInfo[5],
-                            "版本号": app.script.version,
+                            "版本号": scriptCode,
                             "下单时间": nowTimestamp()
                         }
                     }
