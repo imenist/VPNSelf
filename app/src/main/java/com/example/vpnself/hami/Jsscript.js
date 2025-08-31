@@ -1424,15 +1424,15 @@ function setVitaData() {
                 records: [
                     {
                         fields: {
-                            "设备名称": globalTextViewInfo[3],
-                            "商品名称": globalTextViewInfo[7],
-                            "购买数量": globalTextViewInfo[9],
-                            "购买门店": globalTextViewInfo[6],
                             "【配置】确定后时间": globalTextViewInfo[0],
                             "【配置】确认信息后时间":  globalTextViewInfo[1],
                             "【配置】这家/无误后时间": globalTextViewInfo[2],
+                            "设备名称": globalTextViewInfo[3],
                             "设备品牌": globalTextViewInfo[4],
                             "设备型号": globalTextViewInfo[5],
+                            "购买门店": globalTextViewInfo[6],
+                            "商品名称": globalTextViewInfo[7],
+                            "购买数量": globalTextViewInfo[9],
                             "版本号": scriptCode,
                             "下单时间": nowTimestamp()
                         }
