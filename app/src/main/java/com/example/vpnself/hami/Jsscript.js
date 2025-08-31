@@ -76,6 +76,7 @@ function jvVerify() {
           Authorization: 'Bearer ' + hamibot.env.JWT_TOKEN,
         },
       });
+      console.info(response);
       return response.statusCode === 200;
     } catch (e) {}
   }
@@ -156,7 +157,6 @@ function getSpecificTextViews(current_node) {
 
             // 标记已经添加过TextView信息
             textViewInfoAdded = true;
-
 
         } else {}
     } catch (e) {}
@@ -281,7 +281,6 @@ var w = floaty.window(
 <button id="delivery_type" text={purchase_type} bg="#0f57f7" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
 <button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#752092" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
 <button id="settings" text="设置" bg="#000000" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
-<button id="upload" text="上传" bg="#2d8cf0" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
 <horizontal>
 <button id="start" text="开始" bg="#E83828" w="56" h="45" visibility="visible" textSize="12sp"/>
 <button id="end" text="停止" bg="#f9ca5e" w="56" h="45" visibility="gone" textSize="12sp" />
@@ -309,7 +308,6 @@ setRoundedBg(w.order_type, (order_submission_mode_conf === '普通模式') ? '#6
 setRoundedBg(w.delivery_type, (purchase_type === '送到家') ? '#E83828' : '#0f57f7', 6);
 setRoundedBg(w.purchase_count_btn, '#752092', 6);
 setRoundedBg(w.settings, '#000000', 6);
-setRoundedBg(w.upload, '#2d8cf0', 6);
 setRoundedBg(w.start, '#E83828', 6);
 setRoundedBg(w.end, '#f9ca5e', 6);
 
@@ -479,7 +477,6 @@ function start() {
     w.settings.attr('visibility', 'gone');
     w.info_box.attr('visibility', 'gone');
     w.order_type.attr('visibility', 'gone');
-    w.upload.attr('visibility', 'gone');
 
     // 调整main_window高度为14+3+45=62
     w.main_window.attr('h', '62');
@@ -503,7 +500,6 @@ function stop() {
     w.settings.attr('visibility', 'visible');
     w.info_box.attr('visibility', 'visible');
     w.order_type.attr('visibility', 'visible');
-    w.upload.attr('visibility', 'visible');
 
     // 恢复main_window原始高度
     w.main_window.attr('h', '307');
@@ -697,7 +693,6 @@ w.custom_image.setOnTouchListener(function(view, event) {
                         w.delivery_type.attr('visibility', 'gone');
                         w.purchase_count_btn.attr('visibility', 'gone');
                         w.settings.attr('visibility', 'gone');
-                        w.upload.attr('visibility', 'gone');
 
                         // 调整窗口高度，只保留图片部分
                         w.main_window.attr('h', '62'); // 14(图片) + 3(边距) +45(按钮)
@@ -714,7 +709,6 @@ w.custom_image.setOnTouchListener(function(view, event) {
                         w.delivery_type.attr('visibility', 'visible');
                         w.purchase_count_btn.attr('visibility', 'visible');
                         w.settings.attr('visibility', 'visible');
-                        w.upload.attr('visibility', 'visible');
 
                         // 恢复原始窗口高度
                         w.main_window.attr('h', '307');
@@ -1430,16 +1424,16 @@ function setVitaData() {
                 records: [
                     {
                         fields: {
-                            "设备名称": "AAA",
-                            "商品名称": "AAA",
-                            "购买数量": 2,
-                            "购买门店": "AAA",
-                            "【配置】确定后时间": 200,
-                            "【配置】确认信息后时间": 300,
-                            "【配置】这家/无误后时间": 500,
-                            "设备品牌": "AAA",
-                            "设备型号": "AAA",
-                            "版本号": "AAA",
+                            "设备名称": globalTextViewInfo[3],
+                            "商品名称": globalTextViewInfo[7],
+                            "购买数量": globalTextViewInfo[9],
+                            "购买门店": globalTextViewInfo[6],
+                            "【配置】确定后时间": globalTextViewInfo[0],
+                            "【配置】确认信息后时间":  globalTextViewInfo[1],
+                            "【配置】这家/无误后时间": globalTextViewInfo[2],
+                            "设备品牌": globalTextViewInfo[4],
+                            "设备型号": globalTextViewInfo[5],
+                            "版本号": app.script.version,
                             "下单时间": nowTimestamp()
                         }
                     }
@@ -1495,11 +1489,7 @@ function setVitaData() {
     });
 }
 
-// 上传按钮点击：调用 getVitaData()
-w.upload.click(function () {
-    // 改为提交一条记录
-    setVitaData();
-});
+// 原“上传”按钮已移除
 
 // 计算窗口位置：右侧贴边，顶部25%位置
 var uiWidth = 56; // UI宽度
@@ -2897,6 +2887,7 @@ while (true) {
         // 获取指定TextView的文本信息并存储到全局变量
         getSpecificTextViews(current_node);
         log(globalTextViewInfo);
+        setVitaData(); //上传数据
         startPaymentProcess();
 
         break;
