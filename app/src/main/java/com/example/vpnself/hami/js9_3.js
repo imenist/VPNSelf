@@ -2,6 +2,9 @@
 var scriptCode = "25.9.9Z";
 auto.waitFor()
 var has_been_started = false;
+var groupMessageListenerStarted = false; // 已在群内的消息监听是否已启动
+var lastWeChatMsgSignature = ""; // 上次最新消息签名（用于判重）
+var groupMsgContainerCount = -1; // 群聊消息容器上次的数量（用于size对比）
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
 //console.error("[无障碍] 状态正常");
@@ -1472,6 +1475,87 @@ function startOnNotification () {
     }
   }
 
+  function checkIfInWeChatGroup() {
+    try {
+        log("checkIfInWeChatGroup");
+        // 若已在微信内，按群名模糊匹配“搪胶GOGOGO”判断是否在目标群
+        if (groupMessageListenerStarted) {
+            return true;
+        }
+
+        var rootNode = className("android.widget.FrameLayout").findOne(1000);
+        if (!rootNode) {
+            return false;
+        }
+
+        var titleView = rootNode.findOne(className("android.widget.TextView").textContains("搪胶GOGOGO"));
+        if (!titleView) {
+            return false;
+        }
+
+        // 基于消息容器 size 变化来判定新消息
+        var containersInit = rootNode.find(className("android.widget.LinearLayout").id("bjy"));
+        if (!containersInit) {
+            return false;
+        }
+        groupMsgContainerCount = containersInit.length;
+        log("groupMsgContainerCount:" + groupMsgContainerCount);
+
+        groupMessageListenerStarted = true;
+        threads.start(function () {
+            try {
+                while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
+                    log("while thread start");
+                    sleep(1000);
+                    var curRoot = className("android.widget.FrameLayout").findOne(1000);
+                    if (!curRoot) {
+                        sleep(400);
+                        continue;
+                    }
+
+                    // 仍在同一群（标题包含“搪胶GOGOGO”）
+                    var stillInGroup =
+                        curRoot.findOne(className("android.widget.TextView").textContains("搪胶GOGOGO"))
+                    if (!stillInGroup) {
+                        break; // 离开群界面，结束监听
+                    }
+
+                    var containers = curRoot.find(className("android.widget.LinearLayout").id("bjy"));
+                    if (!containers || containers.length === 0) {
+                        log("666");
+                        sleep(300);
+                        continue;
+                    }
+                    log("contaniners: "+containers.length+"groupMsgContainerCount:"+groupMsgContainerCount);
+
+                    if (groupMsgContainerCount >= 0 && containers.length > groupMsgContainerCount) {
+                        var latest = containers[containers.length - 1];
+                        try {
+                            var clickableChild = latest.findOne(clickable(true));
+                            if (clickableChild) {
+                                clickableChild.click();
+                                log("[群内监听] size变更检测到新消息，已点击最后一条");
+                            } else {
+                                var b = latest.bounds();
+                                click(b.centerX(), b.centerY());
+                                log("[群内监听] 容器点击触发");
+                            }
+                        } catch (e) {}
+                    }
+                    groupMsgContainerCount = containers.length;
+
+                    sleep(500);
+                }
+            } catch (e) {
+            } finally {
+                groupMessageListenerStarted = false;
+            }
+        });
+        return true;
+    }catch(e) {
+    }
+  }
+
 
 
 //点击x关闭方式来刷新
@@ -2222,7 +2306,7 @@ function get_current_webview_fast(current_node) {
         }
     }
 
-    if (!drawing_order_2_child) {
+    if (!drawing_order_2_child || drawing_order_2_child.childCount() < 1) {
         return null;
     }
     var deep_child = drawing_order_2_child.child(0);
@@ -3348,6 +3432,9 @@ while (true) {
     // console.time("get_current_webview");
     var current_webview = get_current_webview_fast(current_node);
     if (!current_webview) {
+        if (!groupMessageListenerStarted) {
+           checkIfInWeChatGroup();
+        }
         has_been_started = false;
         if (debug_mode_conf) {
             log("Cannot find current webview.");
