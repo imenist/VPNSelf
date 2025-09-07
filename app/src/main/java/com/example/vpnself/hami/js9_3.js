@@ -3333,6 +3333,7 @@ while (true) {
     // console.time("get_current_node");
     var current_node = get_current_node(webview_parent_node);
     if (!current_node) {
+        has_been_started = false;
         if (debug_mode_conf) {
             log("Cannot find current node.");
         }
@@ -3347,6 +3348,7 @@ while (true) {
     // console.time("get_current_webview");
     var current_webview = get_current_webview_fast(current_node);
     if (!current_webview) {
+        has_been_started = false;
         if (debug_mode_conf) {
             log("Cannot find current webview.");
         }
