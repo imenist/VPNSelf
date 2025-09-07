@@ -1,6 +1,7 @@
 // 文档地址：https://docs.hamibot.com/
 var scriptCode = "25.9.9Z";
 auto.waitFor()
+var has_been_started = false;
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
 //console.error("[无障碍] 状态正常");
@@ -284,7 +285,7 @@ var purchasee_pagee_count = 0;
 var confirm_positioning_value = null;
 var paymentThreadStartTime = 0;
 
-
+var wechatNotificationListener = null;
 // === 坐标缓存系统 (参考 JS_hongzhong.js) ===
 var cached_confirm_info_coords = null; // 缓存"确认信息并支付"按钮坐标
 var cached_double_confirm_coords = null; // 缓存"确认无误"按钮坐标
@@ -498,6 +499,7 @@ if (script_auto_exit_time > 0) {
 }
 
 function start() {
+    has_been_started = false;
     // 检查校准状态
     if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
         // 停止脚本
@@ -538,7 +540,7 @@ function start() {
     script_status = 1;
     start_time = new Date().getTime();
     script_start_time = new Date().getTime(); // 记录脚本启动时间用于定时器
-
+    startOnNotification();
     // 初始化globalTextViewInfo数组
     globalTextViewInfo = [refresh_mode, order_submission_mode_conf, refresh_delay, special_confirm_delay, ignore_ack_click_delay, ignore_ack_click_confirm_delay, deviceInfo.hamibot.deviceName, deviceInfo.device.brand, deviceInfo.device.model];
 
@@ -611,6 +613,8 @@ function stop() {
 
         // 清空globalTextViewInfo数组
         globalTextViewInfo = [];
+        events.removeAllTouchListeners();
+        has_been_started = false;
 
     } catch (e) {}
 
@@ -1383,8 +1387,90 @@ function clickByCoordinates(buttonType) {
         return false;
     }
 }
+function getLatestWeChatMessage() {
+    try {
+        // 确保在微信界面
+        if (currentPackage() !== "com.tencent.mm") {
+            return false;
+        }
+
+        // 获取当前页面的根节点
+        var rootNode = className("android.widget.FrameLayout").findOne(1000);
+        if (!rootNode) {
+            return false;
+        }
+
+        var messageContainers = rootNode.find(className("android.widget.LinearLayout").id("bjy"));
+        if (!messageContainers || messageContainers.length === 0) {
+            return false;
+        }
 
 
+        // 如果只有一个，直接使用
+        var latestMessage = null;
+        if (messageContainers.length === 1) {
+            latestMessage = messageContainers[0];
+        } else {
+            // 如果有多个，直接选择最后一个
+            latestMessage = messageContainers[messageContainers.length - 1];
+        }
+
+        if (!latestMessage) {
+            log("消息获取错误");
+            return false;
+        }
+
+        // 获取消息的坐标信息
+        var clickableChild = latestMessage.findOne(clickable(true));
+                    if (clickableChild) {
+                        clickableChild.click();
+                        log("点击最新消息");
+                    }
+
+
+
+    } catch (e) {
+        log("点击微信消息失败: " + e.message);
+        return false;
+    }
+}
+function startOnNotification () {
+    //通知消息内容监听
+    events.observeNotification();
+    events.onNotification(function (notification) {
+      printNotification(notification);
+    });
+
+    function printNotification (notification) {
+      // 微信监听
+      if (notification.getPackageName() == "com.tencent.mm") {
+        if (notification.getTitle() != null && !has_been_started) {
+          // 标题
+          let title = notification.getTitle()
+          // 文本
+          let text = notification.getText()
+          // 通知时间
+          let date = new Date(notification.when)
+          // 消息推送
+          if (title === "搪胶GOGOGO" && text.includes("[小程序]")) {
+              try {
+                notification.click();
+                log("已点击消息栏");
+
+                // 使用线程执行，避免阻塞通知回调
+                threads.start(function() {
+                  sleep(2000); // 等待页面加载
+                  getLatestWeChatMessage();
+                });
+
+              } catch (e) {
+                console.error("点击消息栏失败: " + e.message);
+              }
+            }
+        }
+      }
+    }
+  }
 
 
 
@@ -3175,6 +3261,7 @@ while (true) {
         }
     }
 
+
     if (script_status == 0) {
         // Reset ALL state variables to ensure clean restart
         rebuy_flag = false;
@@ -3196,7 +3283,6 @@ while (true) {
         sleep(100);
         continue;
     }
-
     // 检查是否为兑换模式，如果是则使用独立的逻辑
     if (pattern_choice === '兑换模式') {
         // 兑换模式独立逻辑
@@ -3214,7 +3300,7 @@ while (true) {
         // 支付页面检测和密码输入逻辑 - 不受支付线程影响
         var had_submit_flag = false;
         if (submit_flag) {
-            setVitaData(); //上传数据
+            setVitaData(); //数据
             had_submit_flag = true;
             submit_flag = false;
             console.error("[页面检测] 当前处于支付页面");
@@ -3274,7 +3360,7 @@ while (true) {
     if (debug_mode_conf) {
         log("Header: " + page_info.header + ", Status: " + page_info.status);
     }
-
+    has_been_started = true;
     switch (page_info.status) {
         case "confirm_and_pay":
           //  log("confirm_and_pay");
@@ -4440,7 +4526,6 @@ function handleExchangeMode() {
         return;
     }
 
-
     // 获取积分兑换节点
     var points_exchange_node = get_points_exchange_node(webview_parent_node);
     if (!points_exchange_node) {
@@ -4454,6 +4539,8 @@ function handleExchangeMode() {
         sleep(100);
         return;
     }
+
+    has_been_started = true;
 
     // 使用积分兑换专用的页面状态检测
     var general_node = get_current_node(webview_parent_node);
