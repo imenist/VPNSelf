@@ -1493,13 +1493,24 @@ function startOnNotification () {
             return false;
         }
 
-        // 基于消息容器 size 变化来判定新消息
+        // 初始化消息容器与滚动锚点
         var containersInit = rootNode.find(className("android.widget.LinearLayout").id("bjy"));
         if (!containersInit) {
             return false;
         }
-        groupMsgContainerCount = containersInit.length;
+        groupMsgContainerCount = containersInit.length; // 记录但不作为判定依据
         log("groupMsgContainerCount:" + groupMsgContainerCount);
+        var lastFirstTop = -1;
+        var lastLastBottom = -1;
+        try {
+            if (containersInit.length > 0) {
+                var bFirstInit = containersInit[0].bounds();
+                lastFirstTop = bFirstInit.top;
+                var bLastInit = containersInit[containersInit.length - 1].bounds();
+                lastLastBottom = bLastInit.bottom;
+            }
+        } catch (e) {}
+        var SCROLL_DELTA_THRESHOLD = 3;
 
         groupMessageListenerStarted = true;
         threads.start(function () {
@@ -1522,26 +1533,57 @@ function startOnNotification () {
 
                     var containers = curRoot.find(className("android.widget.LinearLayout").id("bjy"));
                     if (!containers || containers.length === 0) {
-                        log("666");
+                        log("no containers found");
                         sleep(300);
                         continue;
                     }
-                    log("contaniners: "+containers.length+"groupMsgContainerCount:"+groupMsgContainerCount);
+                    log("containers: "+containers.length+" groupMsgContainerCount:"+groupMsgContainerCount);
 
-                    if (groupMsgContainerCount >= 0 && containers.length > groupMsgContainerCount) {
+                    // 基于坐标变化判定是否发生滚动（视作有新消息）
+                    var curFirstTop = -1;
+                    var curLastBottom = -1;
+                    try {
+                        var bFirst = containers[0].bounds();
+                        curFirstTop = bFirst.top;
+                        var bLast = containers[containers.length - 1].bounds();
+                        curLastBottom = bLast.bottom;
+                    } catch (e) {}
+
+                    var scrolled = false;
+                    if (lastFirstTop !== -1 && curFirstTop !== -1 && Math.abs(curFirstTop - lastFirstTop) >= SCROLL_DELTA_THRESHOLD) {
+                        scrolled = true;
+                    }
+                    if (!scrolled && lastLastBottom !== -1 && curLastBottom !== -1 && Math.abs(curLastBottom - lastLastBottom) >= SCROLL_DELTA_THRESHOLD) {
+                        scrolled = true;
+                    }
+
+                    if (scrolled) {
                         var latest = containers[containers.length - 1];
                         try {
-                            var clickableChild = latest.findOne(clickable(true));
-                            if (clickableChild) {
-                                clickableChild.click();
-                                log("[群内监听] size变更检测到新消息，已点击最后一条");
+                            // 优先点击包含“小程序”的元素
+                            var mini = latest.findOne(className("android.widget.TextView").textContains("小程序"));
+                            if (mini) {
+                                var target = mini.findOne(clickable(true)) || mini;
+                                var bb = target.bounds();
+                                click(bb.centerX(), bb.centerY());
+                                log("[群内监听] 滚动检测到新消息，已点击最后一条小程序");
                             } else {
-                                var b = latest.bounds();
-                                click(b.centerX(), b.centerY());
-                                log("[群内监听] 容器点击触发");
+                                var clickableChild = latest.findOne(clickable(true));
+                                if (clickableChild) {
+                                    clickableChild.click();
+                                    log("[群内监听] 滚动检测到新消息，已点击最后一条");
+                                } else {
+                                    var b = latest.bounds();
+                                    click(b.centerX(), b.centerY());
+                                    log("[群内监听] 滚动检测触发容器点击");
+                                }
                             }
                         } catch (e) {}
                     }
+
+                    // 更新锚点与记录值
+                    lastFirstTop = curFirstTop;
+                    lastLastBottom = curLastBottom;
                     groupMsgContainerCount = containers.length;
 
                     sleep(500);
