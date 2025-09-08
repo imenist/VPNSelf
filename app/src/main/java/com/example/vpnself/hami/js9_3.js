@@ -5,6 +5,7 @@ var has_been_started = false;
 var groupMessageListenerStarted = false; // 已在群内的消息监听是否已启动
 var lastWeChatMsgSignature = ""; // 上次最新消息签名（用于判重）
 var groupMsgContainerCount = -1; // 群聊消息容器上次的数量（用于size对比）
+var lastMiniProgramCaption = null; // 记录最近一次的小程序文案(biq)，用于对比是否变化
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
 //console.error("[无障碍] 状态正常");
@@ -1437,6 +1438,69 @@ function getLatestWeChatMessage() {
         return false;
     }
 }
+
+// 提取消息容器中“小程序”的文案（标题）
+function getMiniProgramCaptionFromContainer(container) {
+    try {
+        if (!container) return null;
+        var textViews = container.find(className("android.widget.TextView").algorithm('DFS'));
+        if (!textViews || textViews.length === 0) return null;
+
+        // 找到包含“小程序”的锚点位置（取最后一个）
+        var anchorIdx = -1;
+        for (var i = 0; i < textViews.length; i++) {
+            try {
+                var t = textViews[i].text();
+                if (t && t.indexOf("小程序") !== -1) {
+                    anchorIdx = i;
+                }
+            } catch (e) {}
+        }
+        if (anchorIdx === -1) return null;
+
+        // 以锚点为基准，向上寻找一个非空且不包含“小程序”的TextView作为文案
+        for (var j = anchorIdx - 1; j >= 0; j--) {
+            try {
+                var prev = textViews[j];
+                if (!prev) continue;
+                var txt = (prev.text() || '').trim();
+                if (txt && txt.indexOf("小程序") === -1) {
+                    return txt;
+                }
+            } catch (e) {}
+        }
+        // 若向上未找到，向后寻找
+        for (var k = anchorIdx + 1; k < textViews.length; k++) {
+            try {
+                var nxt = textViews[k];
+                if (!nxt) continue;
+                var txt2 = (nxt.text() || '').trim();
+                if (txt2 && txt2.indexOf("小程序") === -1) {
+                    return txt2;
+                }
+            } catch (e) {}
+        }
+        return null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// 在进入群页面时记录最后一条小程序文案
+function recordLastMiniProgramCaption(containers) {
+    try {
+        if (!containers || containers.length === 0) return;
+        var last = containers[containers.length - 1];
+        if (!last) return;
+        var caption = getMiniProgramCaptionFromContainer(last);
+        if (caption) {
+            lastMiniProgramCaption = caption;
+            log("[群内监听] 初始小程序文案记录: " + caption);
+        } else {
+            lastMiniProgramCaption = null;
+        }
+    } catch (e) {}
+}
 function startOnNotification () {
     //通知消息内容监听
     events.observeNotification();
@@ -1475,9 +1539,50 @@ function startOnNotification () {
     }
   }
 
+  function checkIfInWechatMainScreen() {
+        try {
+            log("checkIfInWechatMainScreen");
+
+            // 简单直接：滚动+定位+点击
+            var target = id("kbq").className("android.view.View").text("搪胶GOGOGO").findOne(1000);
+            var tryCount = 0;
+            while (!target && tryCount < 10) {
+                if (script_status == 0) {
+                    return false;
+                }
+                scrollDown(0);
+                sleep(200);
+                target = id("kbq").className("android.view.View").text("搪胶GOGOGO").findOne(1000);
+                log("try count: "+tryCount);
+                tryCount++;
+            }
+            if (!target) return false;
+            if (target) {
+                log("target find");
+                var targetParent =target.parent();
+                var targetParentClassName = targetParent.className();
+                while(targetParentClassName != "android.widget.ListView"){
+                    target =targetParent
+                    targetParent =targetParent.parent()
+                    targetParentClassName=targetParent.className()
+                }
+                target.click()
+//                var b = target.bounds();
+//                click(b.centerX(), b.centerY());
+                sleep(500);
+                return true;
+            }
+            return true;
+        } catch(e) {
+        }
+        return false;
+  }
+
   function checkIfInWeChatGroup() {
     try {
         log("checkIfInWeChatGroup");
+        var entered = checkIfInWechatMainScreen();
+        if (entered) { sleep(800); }
         // 若已在微信内，按群名模糊匹配“搪胶GOGOGO”判断是否在目标群
         if (groupMessageListenerStarted) {
             return true;
@@ -1499,6 +1604,8 @@ function startOnNotification () {
             return false;
         }
         groupMsgContainerCount = containersInit.length; // 记录但不作为判定依据
+        // 记录进入页面时最后一条小程序文案
+        try { recordLastMiniProgramCaption(containersInit); } catch (e) {}
         log("groupMsgContainerCount:" + groupMsgContainerCount);
         var lastFirstTop = -1;
         var lastLastBottom = -1;
@@ -1560,22 +1667,22 @@ function startOnNotification () {
                     if (scrolled) {
                         var latest = containers[containers.length - 1];
                         try {
-                            // 优先点击包含“小程序”的元素
+                            // 仅在最新消息确为小程序，且文案变化时才点击
                             var mini = latest.findOne(className("android.widget.TextView").textContains("小程序"));
-                            if (mini) {
-                                var target = mini.findOne(clickable(true)) || mini;
-                                var bb = target.bounds();
-                                click(bb.centerX(), bb.centerY());
-                                log("[群内监听] 滚动检测到新消息，已点击最后一条小程序");
+                            if (!mini) {
+                                log("[群内监听] 最新消息不是小程序，跳过点击");
                             } else {
-                                var clickableChild = latest.findOne(clickable(true));
-                                if (clickableChild) {
-                                    clickableChild.click();
-                                    log("[群内监听] 滚动检测到新消息，已点击最后一条");
+                                var newCaption = getMiniProgramCaptionFromContainer(latest);
+                                if (newCaption && lastMiniProgramCaption && newCaption === lastMiniProgramCaption) {
+                                    log("[群内监听] 小程序文案未变化，跳过点击: " + newCaption);
                                 } else {
-                                    var b = latest.bounds();
-                                    click(b.centerX(), b.centerY());
-                                    log("[群内监听] 滚动检测触发容器点击");
+                                    var target = mini.findOne(clickable(true)) || latest.findOne(clickable(true)) || mini;
+                                    var bb = target.bounds();
+                                    click(bb.centerX(), bb.centerY());
+                                    log("[群内监听] 新小程序消息，已点击。文案: " + (newCaption || "<空>") );
+                                    if (newCaption) {
+                                        lastMiniProgramCaption = newCaption;
+                                    }
                                 }
                             }
                         } catch (e) {}
