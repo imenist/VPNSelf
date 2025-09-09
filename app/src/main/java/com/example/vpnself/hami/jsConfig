@@ -13,7 +13,7 @@
     "help": "填写需要监控群聊名称（需要勾选一键群控才生效）"
   },
   {
-    "name": "monitor_conten",
+    "name": "monitor_content",
     "type": "text",
     "label": "监控内容关键字",
     "textarea": "1",
