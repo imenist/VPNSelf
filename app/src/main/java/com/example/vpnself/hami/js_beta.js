@@ -5,6 +5,8 @@ var has_been_started = false;
 var groupMessageListenerStarted = false; // 已在群内的消息监听是否已启动
 var lastWeChatMsgSignature = ""; // 上次最新消息签名（用于判重）
 var groupMsgContainerCount = -1; // 群聊消息容器上次的数量（用于size对比）
+var lastContainerCount = -1; // 记录上一次的容器数量，用于检测变化
+var noContainerRetryCount = 0; // 记录连续找不到容器的次数
 var lastMiniProgramCaption = null; // 记录最近一次的小程序文案(biq)，用于对比是否变化
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
@@ -48,6 +50,8 @@ const {
     anti_rebound_mode, //防回弹设置
     order_submission_mode,
     successful_data_conf,//成功数据隐藏设置
+    monitoring_group_name,//监控群名
+    monitor_content,//监控内容
 } = hamibot.env;
 const { onFrnameeeTrial } = hamibot.plan;
 // 获取Hamibot设备信息
@@ -263,6 +267,35 @@ var pattern_choice = "抢购模式"; // 抢购模式，兑换模式
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
 var order_submission_mode_conf = order_submission_mode || "普通模式";
 var exchange_points = 5000; // 兑换积分，默认5000
+var monitor_content_conf = monitor_content;//监控内容
+
+// 检查内容是否包含监控关键词
+function containsMonitorContent(text) {
+    if (!text || !monitor_content_conf) return false;
+    // 必须包含的关键词（AND逻辑）
+    var requiredKeywords = ["小程序"];
+
+    // 检查是否包含所有必需关键词
+    for (var i = 0; i < requiredKeywords.length; i++) {
+        if (!text.includes(requiredKeywords[i])) {
+            return false;
+        }
+    }
+    log("包含监控内容: " + requiredKeywords);
+
+    // 按"/"分割监控内容（OR逻辑）
+    var keywords = monitor_content_conf.split("/");
+
+    // 检查文本是否包含任一关键词
+    for (var i = 0; i < keywords.length; i++) {
+        var keyword = keywords[i].trim();
+        if (keyword && text.includes(keyword)) {
+            log("包含监控内容: " + keyword);
+            return true;
+        }
+    }
+    return false;
+}
 
 // 定时器配置 - 脚本自动结束时间（分钟）
 var script_auto_exit_time_conf = hamibot.env.script_auto_exit_time_conf;
@@ -619,6 +652,7 @@ function stop() {
         globalTextViewInfo = [];
         events.removeAllTouchListeners();
         has_been_started = false;
+        groupMessageListenerStarted = false; // 重置群内监听状态
 
     } catch (e) {}
 
@@ -1495,7 +1529,7 @@ function recordLastMiniProgramCaption(containers) {
         var caption = getMiniProgramCaptionFromContainer(last);
         if (caption) {
             lastMiniProgramCaption = caption;
-            log("[群内监听] 初始小程序文案记录: " + caption);
+        //  log("[群内监听] 初始小程序文案记录: " + caption);
         } else {
             lastMiniProgramCaption = null;
         }
@@ -1519,7 +1553,7 @@ function startOnNotification () {
           // 通知时间
           let date = new Date(notification.when)
           // 消息推送
-          if (title === "搪胶GOGOGO" && text.includes("[小程序]")) {
+          if (title === monitoring_group_name && containsMonitorContent(text)) {
               try {
                 notification.click();
                 log("已点击消息栏");
@@ -1543,19 +1577,20 @@ function startOnNotification () {
         try {
             log("checkIfInWechatMainScreen");
 
-            // 简单直接：滚动+定位+点击
-            var target = id("kbq").className("android.view.View").text("搪胶GOGOGO").findOne(1000);
-            var tryCount = 0;
-            while (!target && tryCount < 10) {
-                if (script_status == 0) {
-                    return false;
-                }
-                scrollDown(0);
-                sleep(200);
-                target = id("kbq").className("android.view.View").text("搪胶GOGOGO").findOne(1000);
-                log("try count: "+tryCount);
-                tryCount++;
+            // 检查头部文字：ID为icon_tv，文本为"微信"，且selected状态为true
+            var headerTextView = id("icon_tv").className("android.widget.TextView").text("微信").findOne(1000);
+            if (!headerTextView) {
+                return false;
             }
+
+            // 检查selected状态
+            if (!headerTextView.selected()) {
+                return false;
+            }
+
+
+            // 简单直接：滚动+定位+点击
+            var target = id("kbq").className("android.view.View").text(monitoring_group_name).findOne(1000);
             if (!target) return false;
             if (target) {
                 log("target find");
@@ -1567,8 +1602,6 @@ function startOnNotification () {
                     targetParentClassName=targetParent.className()
                 }
                 target.click()
-//                var b = target.bounds();
-//                click(b.centerX(), b.centerY());
                 sleep(500);
                 return true;
             }
@@ -1580,10 +1613,15 @@ function startOnNotification () {
 
   function checkIfInWeChatGroup() {
     try {
+        if (script_status == 0) {
+            return false;
+         }
         log("checkIfInWeChatGroup");
         var entered = checkIfInWechatMainScreen();
-        if (entered) { sleep(800); }
-        // 若已在微信内，按群名模糊匹配“搪胶GOGOGO”判断是否在目标群
+        if (entered){
+             sleep(800);
+        }
+
         if (groupMessageListenerStarted) {
             return true;
         }
@@ -1593,7 +1631,7 @@ function startOnNotification () {
             return false;
         }
 
-        var titleView = rootNode.findOne(className("android.widget.TextView").textContains("搪胶GOGOGO"));
+        var titleView = className("android.widget.EditText").findOne(400);
         if (!titleView) {
             return false;
         }
@@ -1601,12 +1639,19 @@ function startOnNotification () {
         // 初始化消息容器与滚动锚点
         var containersInit = rootNode.find(className("android.widget.LinearLayout").id("bjy"));
         if (!containersInit) {
+            if (currentPackage() != "com.tencent.mm") {
+                log("[自动恢复] 检测不到微信元素");
+                home();
+                sleep(1000);
+                launchApp("微信");
+                sleep(1000);
+            }
             return false;
         }
         groupMsgContainerCount = containersInit.length; // 记录但不作为判定依据
         // 记录进入页面时最后一条小程序文案
         try { recordLastMiniProgramCaption(containersInit); } catch (e) {}
-        log("groupMsgContainerCount:" + groupMsgContainerCount);
+    //  log("groupMsgContainerCount:" + groupMsgContainerCount);
         var lastFirstTop = -1;
         var lastLastBottom = -1;
         try {
@@ -1620,80 +1665,173 @@ function startOnNotification () {
         var SCROLL_DELTA_THRESHOLD = 3;
 
         groupMessageListenerStarted = true;
+        lastContainerCount = -1; // 重置容器数量记录
+        noContainerRetryCount = 0; // 重置重试计数
         threads.start(function () {
             try {
                 while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
-                    log("while thread start");
-                    sleep(1000);
+                    console.info("群内监控中......");
+                    sleep(500);
                     var curRoot = className("android.widget.FrameLayout").findOne(1000);
                     if (!curRoot) {
                         sleep(400);
                         continue;
                     }
-
-                    // 仍在同一群（标题包含“搪胶GOGOGO”）
-                    var stillInGroup =
-                        curRoot.findOne(className("android.widget.TextView").textContains("搪胶GOGOGO"))
+                    var stillInGroup = className("android.widget.EditText").findOne(400);
                     if (!stillInGroup) {
                         break; // 离开群界面，结束监听
                     }
-
                     var containers = curRoot.find(className("android.widget.LinearLayout").id("bjy"));
                     if (!containers || containers.length === 0) {
-                        log("no containers found");
-                        sleep(300);
-                        continue;
-                    }
-                    log("containers: "+containers.length+" groupMsgContainerCount:"+groupMsgContainerCount);
+                        noContainerRetryCount++;
+                        if (noContainerRetryCount >= 5) {
+                            home();
+                            log("[检测] 多次尝试没查找到小程序，返回手机界面等待消息推送");
+                            if (currentPackage() !== "com.tencent.mm") {
+                                groupMessageListenerStarted = false;
+                                break;
+                            }
+                            // 重置重试计数
+                            noContainerRetryCount = 0;
+                        }
 
-                    // 基于坐标变化判定是否发生滚动（视作有新消息）
+                        sleep(200);
+                        continue;
+                    } else {
+                        // 找到容器了，重置重试计数
+                        noContainerRetryCount = 0;
+                    }
+                   // log("containers: "+containers.length+" groupMsgContainerCount:"+groupMsgContainerCount);
+
+                    // 检测容器数量变化，需要记录小程序文案
+                    var shouldRecord = false;
+                    if (lastContainerCount !== containers.length) {
+                       // log("[群内监听] 检测到容器数量从" + lastContainerCount + "变为" + containers.length);
+                        shouldRecord = true;
+                    }
+
+                    // 检测容器内容变化（容器替换情况）
                     var curFirstTop = -1;
                     var curLastBottom = -1;
-                    try {
-                        var bFirst = containers[0].bounds();
-                        curFirstTop = bFirst.top;
-                        var bLast = containers[containers.length - 1].bounds();
-                        curLastBottom = bLast.bottom;
-                    } catch (e) {}
-
                     var scrolled = false;
-                    if (lastFirstTop !== -1 && curFirstTop !== -1 && Math.abs(curFirstTop - lastFirstTop) >= SCROLL_DELTA_THRESHOLD) {
-                        scrolled = true;
-                    }
-                    if (!scrolled && lastLastBottom !== -1 && curLastBottom !== -1 && Math.abs(curLastBottom - lastLastBottom) >= SCROLL_DELTA_THRESHOLD) {
-                        scrolled = true;
+
+                    // 获取当前容器坐标
+                    if (containers.length > 0) {
+                        try {
+                            var bFirst = containers[0].bounds();
+                            curFirstTop = bFirst.top;
+                            if (containers.length > 1) {
+                                var bLast = containers[containers.length - 1].bounds();
+                                curLastBottom = bLast.bottom;
+                            }
+                        } catch (e) {}
                     }
 
-                    if (scrolled) {
+                    // 检测容器内容变化：通过比较容器内的小程序文案
+                    if (containers.length > 0 && lastMiniProgramCaption) {
+                        try {
+                            // 获取当前最新容器的小程序文案
+                            var latestContainer = containers[containers.length - 1];
+                            var currentCaption = getMiniProgramCaptionFromContainer(latestContainer);
+
+                            // 如果文案不同，说明有新消息
+                            if (currentCaption && currentCaption !== lastMiniProgramCaption) {
+                                scrolled = true;
+                              //  log("[滚动检测] 检测到容器内容变化: 旧文案='" + lastMiniProgramCaption + "' -> 新文案='" + currentCaption + "'");
+                            }
+                        } catch (e) {}
+                    }
+
+                    // 备用检测：坐标变化检测
+                    if (!scrolled && lastFirstTop !== -1 && curFirstTop !== -1) {
+                        var topChanged = Math.abs(curFirstTop - lastFirstTop) >= 1;
+                        if (topChanged) {
+                            scrolled = true;
+                           // log("[滚动检测] 检测到顶部位置变化: " + lastFirstTop + " -> " + curFirstTop + " (差值: " + (curFirstTop - lastFirstTop) + ")");
+                        }
+                    }
+
+                    if (!scrolled && lastLastBottom !== -1 && curLastBottom !== -1) {
+                        var bottomChanged = Math.abs(curLastBottom - lastLastBottom) >= 1;
+                        if (bottomChanged) {
+                            scrolled = true;
+                         //   log("[滚动检测] 检测到底部位置变化: " + lastLastBottom + " -> " + curLastBottom + " (差值: " + (curLastBottom - lastLastBottom) + ")");
+                        }
+                    }
+
+
+                    // 处理新消息（滚动检测到或容器数量变化）
+                    if (scrolled || shouldRecord) {
                         var latest = containers[containers.length - 1];
                         try {
-                            // 仅在最新消息确为小程序，且文案变化时才点击
-                            var mini = latest.findOne(className("android.widget.TextView").textContains("小程序"));
-                            if (!mini) {
-                                log("[群内监听] 最新消息不是小程序，跳过点击");
+                            // 检查最新消息是否包含监控内容
+                            var containsContent = false;
+
+                            // 必须包含的关键词（AND逻辑）
+                            var requiredKeywords = ["小程序"];
+                            var hasAllRequired = true;
+
+                            for (var i = 0; i < requiredKeywords.length; i++) {
+                                var requiredElement = latest.findOne(className("android.widget.TextView").textContains(requiredKeywords[i]));
+                                if (!requiredElement) {
+                                    hasAllRequired = false;
+                                    break;
+                                }
+                            }
+
+                            if (hasAllRequired) {
+                                // 按"/"分割监控内容（OR逻辑）
+                                var keywords = monitor_content_conf.split("/");
+
+                                for (var i = 0; i < keywords.length; i++) {
+                                    var keyword = keywords[i].trim();
+                                    if (keyword) {
+                                        var mini = latest.findOne(className("android.widget.TextView").textContains(keyword));
+                                        if (mini) {
+                                            containsContent = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!containsContent) {
+                         //       log("[群内监听] 最新消息不包含监控内容，跳过点击");
                             } else {
                                 var newCaption = getMiniProgramCaptionFromContainer(latest);
                                 if (newCaption && lastMiniProgramCaption && newCaption === lastMiniProgramCaption) {
-                                    log("[群内监听] 小程序文案未变化，跳过点击: " + newCaption);
+                          //          log("[群内监听] 消息文案未变化，跳过点击: " + newCaption);
                                 } else {
-                                    var target = mini.findOne(clickable(true)) || latest.findOne(clickable(true)) || mini;
+                                    var target = latest.findOne(clickable(true)) || latest;
                                     var bb = target.bounds();
                                     click(bb.centerX(), bb.centerY());
-                                    log("[群内监听] 新小程序消息，已点击。文案: " + (newCaption || "<空>") );
+                            //        log("[群内监听] 新监控消息，已点击。文案: " + (newCaption || "<空>") );
                                     if (newCaption) {
                                         lastMiniProgramCaption = newCaption;
                                     }
                                 }
                             }
                         } catch (e) {}
+
+                        // 记录最新消息的小程序文案
+                        try {
+                            recordLastMiniProgramCaption(containers);
+                        } catch (e) {
+                            log("[群内监听] 记录小程序文案失败: " + e.message);
+                        }
                     }
 
                     // 更新锚点与记录值
                     lastFirstTop = curFirstTop;
                     lastLastBottom = curLastBottom;
                     groupMsgContainerCount = containers.length;
+                    lastContainerCount = containers.length; // 更新全局容器数量记录
 
-                    sleep(500);
+                    // 重置检测标志
+                    scrolled = false;
+                    shouldRecord = false;
+
+                    sleep(200);
                 }
             } catch (e) {
             } finally {
@@ -3582,7 +3720,7 @@ while (true) {
     var current_webview = get_current_webview_fast(current_node);
     if (!current_webview) {
         if (!groupMessageListenerStarted) {
-           checkIfInWeChatGroup();
+            checkIfInWeChatGroup();
         }
         has_been_started = false;
         if (debug_mode_conf) {

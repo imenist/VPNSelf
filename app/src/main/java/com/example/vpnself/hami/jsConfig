@@ -1,9 +1,46 @@
 [
-{
+  {
     "name": "script_start_immediately_conf",
     "type": "checkbox",
-    "label": "脚本一键启动",
-    "help": "勾选后一键启动"
+    "label": "一键群控启动",
+    "help": "勾选后一键启动，并开启智能监控系统"
+  },
+  {
+    "name": "monitoring_group_name",
+    "type": "text",
+    "label": "监控群聊名称",
+    "textarea": "1",
+    "help": "填写需要监控群聊名称（需要勾选一键群控才生效）"
+  },
+  {
+    "name": "monitor_conten",
+    "type": "text",
+    "label": "监控内容关键字",
+    "textarea": "1",
+    "help": "请输入需要匹配的关键字，使用 “/” 分割"
+  },
+  {
+    "name": "refresh_mode_conf",
+    "type": "radio",
+    "label": "刷新模式",
+    "options": {
+      "智能刷": "智能刷",
+      "切换刷": "切换刷",
+      "页面刷": "页面刷"
+    },
+    "validation": "required",
+    "default": "智能刷"
+  },
+  {
+    "name": "order_submission_mode",
+    "type": "radio",
+    "label": "订单提交模式",
+    "options": {
+      "普通模式": "普通模式",
+      "狂暴模式": "狂暴模式"
+    },
+    "validation": "required",
+    "default": "普通模式"
   },
   {
     "name": "delivery",
@@ -28,75 +65,59 @@
   },
   {
     "name": "select_index_conf",
-    "type": "textarea",
-    "label": "特殊款选项(测试)",
+    "type": "text",
+    "label": "特殊款选项",
+    "textarea": "1",
     "help": "默认为第一个选择，写1为第一个选择，以此类推。"
   },
   {
     "name": "purchase_count_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "购买数量",
+    "textarea": "1",
     "help": "默认为1, 请根据需求设置, 兼容超出最大购买数量。"
   },
   {
-    "name": "rage_stock_refresh_conf",
-    "type": "checkbox",
-    "label": "强效库存刷新模式",
-    "help": "有效优化库存刷新时效。"
-  },
-  {
     "name": "delay_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "库存刷新间隔时间 (毫秒)",
     "help": "默认600ms，请确保为纯数字 推介不要低于350ms，否则容易出现异常或手速过快。(毫秒, 1000 = 1秒)。 "
   },
   {
-    "name": "sku_result_toast_conf",
-    "type": "checkbox",
-    "label": "库存刷新时点击商品添加数量",
-    "help": "尝试添加商品数量，二次检测库存。"
-  },
-  {
     "name": "max_refresh_time_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "进入库存刷新模式后自动停止脚本的时间 (分钟)",
     "help": "单位为分钟，支持小数点（如0.5=30秒）。不填写或填0则为不会自动停止库存刷新。"
   },
   {
     "name": "timeout_sleep_wait_time_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "脚本暂停时间（秒）",
     "help": "单位为秒，不设置或设置为0则停止脚本。"
   },
   {
     "name": "ignore_ack_click_delay_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "确认信息并支付点击后等待时间",
     "help": "默认时间200ms，单位为毫秒（1000ms = 1秒）。"
   },
   {
     "name": "ignore_ack_click_confirm_delay_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "就是这家/确认无误点击后等待时间",
     "help": "默认时间800ms，单位为毫秒（1000ms = 1秒）。"
   },
   {
     "name": "special_confirm_delay_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "确定按钮点击后等待时间",
     "help": "默认时间400ms，单位为毫秒（1000ms = 1秒）。"
-  },
-  {
-    "name": "auto_click_notification_conf",
-    "type": "checkbox",
-    "label": "自动点击到货通知按钮",
-    "help": "自动点击没点过的到货通知。"
   },
   {
     "name": "vibrate_time_conf",
     "type": "range",
     "label": "进入支付页面后振动的时长 (毫秒)",
-    "min": 1000,
+    "min": 0,
     "max": 30000,
     "show-value": true,
     "value": 3000
@@ -113,9 +134,33 @@
   },
   {
     "name": "password_setting_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "支付密码设定",
     "help": "设置6位数支付密码，用于商品抢购成功后脚本自动输入密码"
+  },
+  {
+    "name": "anti_rebound_mode",
+    "type": "checkbox",
+    "label": "订单页面防止反复回弹",
+    "help": "勾选后开启减少订单页面被弹出"
+  },
+  {
+    "name": "script_pause_when_success_conf",
+    "type": "checkbox",
+    "label": "抢购成功停止按钮",
+    "help": "勾选后抢购成功后停止"
+  },
+  {
+    "name": "sku_result_toast_conf",
+    "type": "checkbox",
+    "label": "库存刷新时点击商品添加数量",
+    "help": "尝试添加商品数量，二次检测库存。"
+  },
+  {
+    "name": "auto_click_notification_conf",
+    "type": "checkbox",
+    "label": "自动点击到货通知按钮",
+    "help": "自动点击没点过的到货通知。"
   },
   {
     "name": "hide_console_conf",
@@ -124,8 +169,14 @@
     "help": "脚本在启动的时候不会显示控制台。默认不勾选。"
   },
   {
+    "name": "successful_data_conf",
+    "type": "checkbox",
+    "label": "SUCCESS日志",
+    "help": "隐藏中单后脚本的配置数据（不分享其他用户查看）"
+  },
+  {
     "name": "hide_sleep_time_conf",
-    "type": "textarea",
+    "type": "text",
     "label": "隐藏主界面时间",
     "help": "分钟数，可以小数（0.5 = 30秒），默认10分钟。"
   }
