@@ -8,6 +8,9 @@ var groupMsgContainerCount = -1; // 群聊消息容器上次的数量（用于si
 var lastContainerCount = -1; // 记录上一次的容器数量，用于检测变化
 var noContainerRetryCount = 0; // 记录连续找不到容器的次数
 var lastMiniProgramCaption = null; // 记录最近一次的小程序文案(biq)，用于对比是否变化
+var isProcessingNotification = false; // 防止通知点击重复执行
+var notificationListenerActive = true; // 通知监听器是否激活
+var notificationIntervalId = null; // 通知监听定时器ID
 // auto.setMode('fast')
 // auto.setFlags(['findOnUiThread']);
 //console.error("[无障碍] 状态正常");
@@ -267,9 +270,27 @@ var pattern_choice = "抢购模式"; // 抢购模式，兑换模式
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
 var order_submission_mode_conf = order_submission_mode || "普通模式";
 var exchange_points = 5000; // 兑换积分，默认5000
-var monitor_content_conf = monitor_content;//监控内容
+var monitor_content_conf = monitor_content || "小程序";//监控内容
 
 // 检查内容是否包含监控关键词
+// 检测文本中是否包含【】并设置purchase_type
+// function detectAndSetPurchaseType(text) {
+//     try {
+//         if (!text) return;
+
+//         // 模糊检查是否包含【】
+//         var hasBrackets = /【.*?】/.test(text);
+
+//         if (hasBrackets) {
+//             purchase_type = "到店取";
+//         } else {
+//             purchase_type = "送到家";
+//         }
+//     } catch (e) {
+//         log("检测配送方式失败: " + e.message);
+//     }
+// }
+
 function containsMonitorContent(text) {
     if (!text || !monitor_content_conf) return false;
     // 必须包含的关键词（AND逻辑）
@@ -281,7 +302,6 @@ function containsMonitorContent(text) {
             return false;
         }
     }
-    log("包含监控内容: " + requiredKeywords);
 
     // 按"/"分割监控内容（OR逻辑）
     var keywords = monitor_content_conf.split("/");
@@ -290,7 +310,9 @@ function containsMonitorContent(text) {
     for (var i = 0; i < keywords.length; i++) {
         var keyword = keywords[i].trim();
         if (keyword && text.includes(keyword)) {
-            log("包含监控内容: " + keyword);
+            log("触发设置关键词: " + keyword + requiredKeywords);
+            // 检测并设置配送方式
+            // detectAndSetPurchaseType(text);
             return true;
         }
     }
@@ -577,7 +599,9 @@ function start() {
     script_status = 1;
     start_time = new Date().getTime();
     script_start_time = new Date().getTime(); // 记录脚本启动时间用于定时器
-    startOnNotification();
+    if (script_start_immediately_conf) {
+        startOnNotification();
+    }
     // 初始化globalTextViewInfo数组
     globalTextViewInfo = [refresh_mode, order_submission_mode_conf, refresh_delay, special_confirm_delay, ignore_ack_click_delay, ignore_ack_click_confirm_delay, deviceInfo.hamibot.deviceName, deviceInfo.device.brand, deviceInfo.device.model];
 
@@ -651,8 +675,16 @@ function stop() {
         // 清空globalTextViewInfo数组
         globalTextViewInfo = [];
         events.removeAllTouchListeners();
+        // 禁用通知监听器
+        notificationListenerActive = false;
         has_been_started = false;
         groupMessageListenerStarted = false; // 重置群内监听状态
+
+        // 清除通知监听定时器
+        if (notificationIntervalId !== null) {
+            clearInterval(notificationIntervalId);
+            notificationIntervalId = null;
+        }
 
     } catch (e) {}
 
@@ -1443,6 +1475,8 @@ function getLatestWeChatMessage() {
             return false;
         }
 
+        // 记录最后一条小程序文案
+        recordLastMiniProgramCaption(messageContainers);
 
         // 如果只有一个，直接使用
         var latestMessage = null;
@@ -1458,14 +1492,15 @@ function getLatestWeChatMessage() {
             return false;
         }
 
+        sleep(200);
         // 获取消息的坐标信息
         var clickableChild = latestMessage.findOne(clickable(true));
-                    if (clickableChild) {
-                        clickableChild.click();
-                        log("点击最新消息");
-                    }
-
-
+        if (clickableChild) {
+            log("点击小程序链接");
+            clickableChild.click();
+        }
+        sleep(1000);
+        isProcessingNotification = false;
 
     } catch (e) {
         log("点击微信消息失败: " + e.message);
@@ -1535,53 +1570,102 @@ function recordLastMiniProgramCaption(containers) {
         }
     } catch (e) {}
 }
+// 检查通知权限是否可用
+function checkNotificationPermission() {
+    try {
+        // 检查是否有通知监听权限
+        // 通过尝试访问通知服务来检查权限
+        if (typeof events !== 'undefined' && events.observeNotification) {
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error("通知权限检查失败: " + e.message);
+        return false;
+    }
+}
+
 function startOnNotification () {
     //通知消息内容监听
-    events.observeNotification();
-    events.onNotification(function (notification) {
-      printNotification(notification);
-    });
+    notificationListenerActive = true;
+
+    try {
+        // 检查通知权限
+        if (!checkNotificationPermission()) {
+            console.error("通知权限未开启，无法监听通知消息");
+            toastLog("请开启通知读取权限以使用消息监听功能");
+            notificationListenerActive = false;
+            return;
+        }
+
+        events.observeNotification();
+        events.onNotification(function (notification) {
+          if (!notificationListenerActive) return;
+          printNotification(notification);
+        });
+
+        console.info("通知监听已启动");
+    } catch (e) {
+        toastLog("通知监听启动失败，请检查权限设置");
+        notificationListenerActive = false;
+    }
+
+    // 定期心跳日志，每30秒显示一次监听状态
+    notificationIntervalId = setInterval(function() {
+      if (notificationListenerActive && !has_been_started && !groupMessageListenerStarted && script_status == 1) {
+        console.info("通知栏消息监听中......");
+      }
+    }, 1000);
 
     function printNotification (notification) {
       // 微信监听
       if (notification.getPackageName() == "com.tencent.mm") {
-        if (notification.getTitle() != null && !has_been_started) {
+        if (notification.getTitle() != null) {
           // 标题
           let title = notification.getTitle()
           // 文本
           let text = notification.getText()
-          // 通知时间
-          let date = new Date(notification.when)
+
+          // 检测停止关键词
+          if (title === monitoring_group_name && text) {
+            var stopKeywords = ["暂停", "stop", "停止", "停", "关闭小程序", "关闭", "返回", "退出", "退出小程序","结束", "x", "1"];
+            for (var i = 0; i < stopKeywords.length; i++) {
+              if (text.includes(stopKeywords[i])) {
+                home();
+                rebuy_flag = false;
+                confirmButtonExecuted = false;
+                return;
+              }
+            }
+          }
+
           // 消息推送
-          if (title === monitoring_group_name && containsMonitorContent(text)) {
-              try {
+          if (title === monitoring_group_name && containsMonitorContent(text) && !has_been_started) {
+            isProcessingNotification = true;
+            try {
                 notification.click();
                 log("已点击消息栏");
+                // 使用setTimeout替代sleep，避免阻塞UI线程
+                setTimeout(function() {
+                  // 使用线程执行，避免阻塞通知回调
+                  threads.start(function() {
+                    getLatestWeChatMessage();
+                  });
+                }, 2000); // 等待页面加载
 
-                // 使用线程执行，避免阻塞通知回调
-                threads.start(function() {
-                  sleep(2000); // 等待页面加载
-                  getLatestWeChatMessage();
-                });
-
-              } catch (e) {
+            } catch (e) {
                 console.error("点击消息栏失败: " + e.message);
-              }
+            }
             }
         }
       }
     }
   }
 
-  function checkIfInWechatMainScreen() {
+  function checkIfInWechatMainScreen(headerTextView) {
         try {
-            log("checkIfInWechatMainScreen");
+        //    log("checkIfInWechatMainScreen");
 
-            // 检查头部文字：ID为icon_tv，文本为"微信"，且selected状态为true
-            var headerTextView = id("icon_tv").className("android.widget.TextView").text("微信").findOne(1000);
-            if (!headerTextView) {
-                return false;
-            }
 
             // 检查selected状态
             if (!headerTextView.selected()) {
@@ -1593,7 +1677,7 @@ function startOnNotification () {
             var target = id("kbq").className("android.view.View").text(monitoring_group_name).findOne(1000);
             if (!target) return false;
             if (target) {
-                log("target find");
+                log("[点击操作]点击"+monitoring_group_name+"群聊");
                 var targetParent =target.parent();
                 var targetParentClassName = targetParent.className();
                 while(targetParentClassName != "android.widget.ListView"){
@@ -1616,11 +1700,21 @@ function startOnNotification () {
         if (script_status == 0) {
             return false;
          }
-        log("checkIfInWeChatGroup");
-        var entered = checkIfInWechatMainScreen();
-        if (entered){
-             sleep(800);
+         if (isProcessingNotification) {
+            return;
+         }
+    //    log("checkIfInWeChatGroup");
+
+            // 检查头部文字：ID为icon_tv，文本为"微信"，且selected状态为true
+        var headerTextView = id("icon_tv").className("android.widget.TextView").text("微信").findOne(200);
+        if (headerTextView) {
+            var entered = checkIfInWechatMainScreen(headerTextView);
+            if (entered){
+                 sleep(800);
+            }
+            return false;
         }
+
 
         if (groupMessageListenerStarted) {
             return true;
@@ -1670,7 +1764,7 @@ function startOnNotification () {
         threads.start(function () {
             try {
                 while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
-                    console.info("群内监控中......");
+                    console.info("聊天消息监听中......");
                     sleep(500);
                     var curRoot = className("android.widget.FrameLayout").findOne(1000);
                     if (!curRoot) {
@@ -1686,7 +1780,7 @@ function startOnNotification () {
                         noContainerRetryCount++;
                         if (noContainerRetryCount >= 5) {
                             home();
-                            log("[检测] 多次尝试没查找到小程序，返回手机界面等待消息推送");
+                            log("[检测] 多次尝试聊天界面异常，返回设备主页等待消息栏消息推送");
                             if (currentPackage() !== "com.tencent.mm") {
                                 groupMessageListenerStarted = false;
                                 break;
@@ -1798,6 +1892,23 @@ function startOnNotification () {
                             if (!containsContent) {
                          //       log("[群内监听] 最新消息不包含监控内容，跳过点击");
                             } else {
+                                // 获取消息文本内容进行检测
+                                var messageText = "";
+                                try {
+                                    var textViews = latest.find(className("android.widget.TextView"));
+                                    for (var j = 0; j < textViews.length; j++) {
+                                        var tv = textViews[j];
+                                        if (tv && tv.text()) {
+                                            messageText += tv.text() + " ";
+                                        }
+                                    }
+                                } catch (e) {}
+
+                                // // 检测并设置配送方式
+                                // if (messageText) {
+                                //     detectAndSetPurchaseType(messageText);
+                                // }
+
                                 var newCaption = getMiniProgramCaptionFromContainer(latest);
                                 if (newCaption && lastMiniProgramCaption && newCaption === lastMiniProgramCaption) {
                           //          log("[群内监听] 消息文案未变化，跳过点击: " + newCaption);
@@ -1805,7 +1916,16 @@ function startOnNotification () {
                                     var target = latest.findOne(clickable(true)) || latest;
                                     var bb = target.bounds();
                                     click(bb.centerX(), bb.centerY());
-                            //        log("[群内监听] 新监控消息，已点击。文案: " + (newCaption || "<空>") );
+                                    log("[消息监听] 已点击小程序消息，等待页面跳转...");
+
+                                    // 点击后等待页面跳转，避免循环卡死
+                                    sleep(2000);
+
+                                    // 检查是否已跳转到小程序页面
+                                    if (has_been_started) {
+                                        break;
+                                    }
+
                                     if (newCaption) {
                                         lastMiniProgramCaption = newCaption;
                                     }
@@ -3657,6 +3777,7 @@ while (true) {
     // 检查是否为兑换模式，如果是则使用独立的逻辑
     if (pattern_choice === '兑换模式') {
         // 兑换模式独立逻辑
+        has_been_started = true;
         handleExchangeMode();
         continue;
     }
@@ -3719,7 +3840,7 @@ while (true) {
     // console.time("get_current_webview");
     var current_webview = get_current_webview_fast(current_node);
     if (!current_webview) {
-        if (!groupMessageListenerStarted) {
+        if (!groupMessageListenerStarted && script_start_immediately_conf) {
             checkIfInWeChatGroup();
         }
         has_been_started = false;
