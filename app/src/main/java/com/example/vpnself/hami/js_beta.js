@@ -151,9 +151,9 @@ function getSpecificTextViews(current_node) {
             for (var i = 0; i < textViews.length; i++) {
                 try {
                     var textView = textViews[i];
-                    var text = textView.text() || "";
+                    var textContent = textView.text() || "";
 
-                    if (text === "订单详情") {
+                    if (textContent === "订单详情") {
                         orderDetailIndex = i;
                         break;
                     }
@@ -1629,8 +1629,17 @@ function startOnNotification () {
           // 检测停止关键词
           if (title === monitoring_group_name && text) {
             var stopKeywords = ["暂停", "stop", "停止", "停", "关闭小程序", "关闭", "返回", "退出", "退出小程序","结束", "x", "1"];
+
             for (var i = 0; i < stopKeywords.length; i++) {
-              if (text.includes(stopKeywords[i])) {
+              var keyword = stopKeywords[i];
+              var isMatch = false;
+                if (keyword === "1") {
+                  isMatch = text === "1" || /^.+:\s1$/.test(text);
+                } else {
+                isMatch = text.includes(keyword);
+              }
+
+              if (isMatch) {
                 home();
                 rebuy_flag = false;
                 confirmButtonExecuted = false;
@@ -3446,6 +3455,7 @@ var rebuy_flag = false;
 var submit_flag = false;
 var confirm_btn_retry_count = 0;
 var ignore_next_purchase_page_flag = false;
+var has_entered_confirm_and_pay = false; // 标记是否进入过confirm_and_pay状态
 
 
 var dc_streak = 0;
@@ -3864,6 +3874,7 @@ while (true) {
         tried_clicked_confirm_to_pay_page_count = 0;
         var ignore_next_purchase_page_flag = false;
         rebuy_flag = true;
+        has_entered_confirm_and_pay = true; // 标记已进入confirm_and_pay状态
         if (!current_webview) {
             if (debug_mode_conf) {
                 log("Cannot find current webview.");
@@ -4483,7 +4494,54 @@ while (true) {
             } else {
                 console.warn("[并行选择] 未找到规格按钮: " + specs);
             }
+            sleep(200);
+            var store_btn = className('android.widget.TextView').text('选择门店').findOne(20);
+            if (store_btn) {
+                store_btn.click();
+                console.info("[操作] 点击选择门店");
+                break; // 跳出当前代码块
+            }else{
+                // 识别indexInParent为11，depth为25的TextView
+                console.info("[操作] 开始查找indexInParent为11，depth为25的TextView");
+                var targetTextView = current_webview.find(className("android.widget.TextView").depth(25).algorithm('DFS'));
+                var shouldBreak = false; // 标志变量控制是否跳出
 
+                if (targetTextView) {
+                    // 查找indexInParent为11的TextView
+                    for (var k = 0; k < targetTextView.length; k++) {
+                        try {
+                            var tv = targetTextView[k];
+                            if (tv.indexInParent() === 11) {
+                                var tvText = tv.text();
+                                console.info("[操作] 找到目标TextView，文本内容: " + tvText);
+
+                                // 检查text是否为"佛山顺德万象汇"
+                                if (tvText !== "广州天汇广场B1店") {
+                                    console.info("[操作] 文本不是'佛山顺德万象汇'，执行点击操作");
+                                    tv.click();
+                                    console.info("[操作] 成功点击目标TextView");
+
+                                    // 等待400ms
+                                    sleep(400);
+                                    shouldBreak = true; // 设置跳出标志
+                                    break; // 点击后跳出循环
+                                } else {
+                                    console.info("[操作] 文本已经是'佛山顺德万象汇'，无需点击");
+                                }
+                            }
+                        } catch (e) {
+                            console.error("[操作] 处理TextView时出错: " + e.message);
+                        }
+                    }
+                } else {
+                    console.warn("[操作] 未找到depth为25的TextView");
+                }
+
+                // 如果执行了点击操作，跳出整个代码块
+                if (shouldBreak) {
+                    break;
+                }
+            }
             // 立即开始库存刷新，零延迟启动
             var selectionEndTime = new Date().getTime();
             console.info("[并行选择] 选择操作完成，立即开始库存刷新");
@@ -4646,7 +4704,7 @@ while (true) {
                 if (confirm_btn) break;
 
 
-                purchase_count_label = updated_webview.findOne(text("数量").algorithm('DFS'));
+                var purchase_count_label = updated_webview.findOne(text("数量").algorithm('DFS'));
                 if (!purchase_count_label) {
                     break;
                 }
@@ -4773,7 +4831,84 @@ while (true) {
 
         break;
         case "back":
-            back();
+            // 只有在进入过confirm_and_pay状态后才执行back操作，防止误操作
+            if (has_entered_confirm_and_pay) {
+                back();
+                break;
+            }
+
+                // 查找id为city-box的android.view.View并点击
+                console.info("[操作] 开始查找id为city-box的android.view.View");
+                var cityBoxView = current_webview.find(className("android.view.View").id("city-box").algorithm('DFS'));
+
+                if (cityBoxView) {
+                    try {
+                        cityBoxView.click();
+                        console.info("[操作] 成功点击id为city-box的android.view.View");
+                        // 等待页面加载
+                        sleep(400);
+
+                        // 遍历所有TextView查找"佛山"
+                        console.info("[操作] 开始查找佛山TextView");
+                        var textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
+                        var foundFoshan = false;
+
+                        for (var i = 0; i < textViews.length; i++) {
+                            try {
+                                var textView = textViews[i];
+                                var textContent = textView.text();
+
+                                if (textContent && textContent.includes("广州")) {
+                                    textView.click();
+                                    console.info("[操作] 成功点击佛山TextView: " + textContent);
+                                    foundFoshan = true;
+
+                                    // 等待400ms
+                                    sleep(400);
+
+                                    // 搜索"佛山顺德万象汇"的TextView并点击
+                                    console.info("[操作] 开始查找佛山顺德万象汇TextView");
+                                    var textViews2 = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
+                                    var foundWanxianghui = false;
+
+                                    for (var j = 0; j < textViews2.length; j++) {
+                                        try {
+                                            var textView2 = textViews2[j];
+                                            var text2 = textView2.text();
+
+                                            if (text2 && text2.includes("广州天汇广场B1店")) {
+                                                textView2.click();
+                                                console.info("[操作] 成功点击佛山顺德万象汇TextView: " + text2);
+                                                foundWanxianghui = true;
+                                                break;
+                                            }
+                                        } catch (e) {
+                                            // 忽略单个TextView的错误
+                                        }
+                                    }
+
+                                    if (!foundWanxianghui) {
+                                        console.warn("[操作] 未找到包含'佛山顺德万象汇'的TextView");
+                                    }
+                                    purchasee_pagee_count = 1;
+                                    // 点击后等待400ms
+                                    sleep(400);
+
+                                    break; // 跳出外层循环
+                                }
+                            } catch (e) {
+                                // 忽略单个TextView的错误
+                            }
+                        }
+
+                        if (!foundFoshan) {
+                            console.warn("[操作] 未找到包含'佛山'的TextView");
+                        }
+
+                    } catch (e) {
+                        console.error("[操作] 点击city-box View失败: " + e.message);
+                    }
+                }
             break;
         case "default":
             // Default logic
