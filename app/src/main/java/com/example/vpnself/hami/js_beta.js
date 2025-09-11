@@ -4837,14 +4837,14 @@ while (true) {
                 break;
             }
 
-                // 查找id为city-box的android.view.View并点击
-                console.info("[操作] 开始查找id为city-box的android.view.View");
-                var cityBoxView = current_webview.find(className("android.view.View").id("city-box").algorithm('DFS'));
-
-                if (cityBoxView) {
-                    try {
-                        cityBoxView.click();
-                        console.info("[操作] 成功点击id为city-box的android.view.View");
+                // 查找 depth=21 的 android.widget.TextView 并点击
+                console.info("[操作] 开始查找 depth=21 的 android.widget.TextView");
+                try {
+                    var imagesDepth21 = current_webview.find(className("android.widget.TextView").depth(21).algorithm('DFS'));
+                    if (imagesDepth21 && imagesDepth21.length > 0) {
+                        var img = imagesDepth21[0];
+                        var ib = img.click();
+                        console.info("[操作] 使用坐标点击 Image(depth=21): (" + ib.centerX() + ", " + ib.centerY() + ")");
                         // 等待页面加载
                         sleep(400);
 
@@ -4858,7 +4858,7 @@ while (true) {
                                 var textView = textViews[i];
                                 var textContent = textView.text();
 
-                                if (textContent && textContent.includes("广州")) {
+                                if (textContent && textContent.includes("佛山")) {
                                     textView.click();
                                     console.info("[操作] 成功点击佛山TextView: " + textContent);
                                     foundFoshan = true;
@@ -4876,7 +4876,7 @@ while (true) {
                                             var textView2 = textViews2[j];
                                             var text2 = textView2.text();
 
-                                            if (text2 && text2.includes("广州天汇广场B1店")) {
+                                            if (text2 && text2.includes("佛山顺德万象汇")) {
                                                 textView2.click();
                                                 console.info("[操作] 成功点击佛山顺德万象汇TextView: " + text2);
                                                 foundWanxianghui = true;
@@ -4904,10 +4904,11 @@ while (true) {
                         if (!foundFoshan) {
                             console.warn("[操作] 未找到包含'佛山'的TextView");
                         }
-
-                    } catch (e) {
-                        console.error("[操作] 点击city-box View失败: " + e.message);
+                    } else {
+                        console.warn("[操作] 未找到 depth=21 的 android.widget.TextView");
                     }
+                } catch (e) {
+                    console.error("[操作] 查找/点击 Image(depth=21) 失败: " + e.message);
                 }
             break;
         case "default":
