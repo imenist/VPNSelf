@@ -4844,13 +4844,15 @@ while (true) {
                     if (imagesDepth21 && imagesDepth21.length > 0) {
                         var img = imagesDepth21[0];
                         var ib = img.click();
-                        console.info("[操作] 使用坐标点击 Image(depth=21): (" + ib.centerX() + ", " + ib.centerY() + ")");
                         // 等待页面加载
                         sleep(400);
+                        var webview_parent_node = get_webview_parent_node();
+                        var current_node = get_current_node(webview_parent_node);
+                        var update_view = get_current_webview_fast(current_node);
 
                         // 遍历所有TextView查找"佛山"
                         console.info("[操作] 开始查找佛山TextView");
-                        var textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
+                        var textViews = update_view.find(className("android.widget.TextView").algorithm('DFS'));
                         var foundFoshan = false;
 
                         for (var i = 0; i < textViews.length; i++) {
