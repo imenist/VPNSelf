@@ -4860,10 +4860,22 @@ while (true) {
                         var curent_node = get_current_node(webview_parent_node);
                         var update_view = get_current_webview_fast(curent_node);
 
-                        // 依据监控门店名称解析店名与城市前缀
+                        // 依据监控门店名称解析店名与城市前缀（为空则暂停并提示）
                         var monitoringShopRaw = (monitoring_shop_name || "").toString().trim();
-                        var shopNameToUse = monitoringShopRaw ? monitoringShopRaw.split('/') [0].trim() : "保定万博广场";
-                        var cityPrefix = monitoringShopRaw ? shopNameToUse.slice(0, 2) : "保定";
+                        if (!monitoringShopRaw) {
+                            script_status = 0;
+                            ui.post(() => { stop(); });
+                            toast("未选定对应门店。");
+                            break;
+                        }
+                        var shopNameToUse = monitoringShopRaw.split('/') [0].trim();
+                        if (!shopNameToUse) {
+                            script_status = 0;
+                            ui.post(() => { stop(); });
+                            toast("未选定对应门店。");
+                            break;
+                        }
+                        var cityPrefix = shopNameToUse.slice(0, 2);
 
                         // 遍历所有TextView查找目标城市前缀
                         console.info("[操作] 开始查找" + cityPrefix + "TextView");
