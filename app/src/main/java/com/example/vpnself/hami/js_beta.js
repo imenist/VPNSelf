@@ -54,7 +54,8 @@ const {
     order_submission_mode,
     successful_data_conf,//成功数据隐藏设置
     monitoring_group_name,//监控群名
-    monitor_content,//监控内容
+    monitor_content_conf,//监控内容
+    monitoring_shop_name_conf,//监控点名
 } = hamibot.env;
 const { onFrnameeeTrial } = hamibot.plan;
 // 获取Hamibot设备信息
@@ -270,7 +271,8 @@ var pattern_choice = "抢购模式"; // 抢购模式，兑换模式
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
 var order_submission_mode_conf = order_submission_mode || "普通模式";
 var exchange_points = 5000; // 兑换积分，默认5000
-var monitor_content_conf = monitor_content || "小程序";//监控内容
+var monitor_content = monitor_content_conf || "小程序";//监控内容
+var monitoring_shop_name = monitoring_shop_name_conf;//监控商店内容
 
 // 检查内容是否包含监控关键词
 // 检测文本中是否包含【】并设置purchase_type
@@ -292,7 +294,7 @@ var monitor_content_conf = monitor_content || "小程序";//监控内容
 // }
 
 function containsMonitorContent(text) {
-    if (!text || !monitor_content_conf) return false;
+    if (!text || !monitor_content) return false;
     // 必须包含的关键词（AND逻辑）
     var requiredKeywords = ["小程序"];
 
@@ -304,7 +306,7 @@ function containsMonitorContent(text) {
     }
 
     // 按"/"分割监控内容（OR逻辑）
-    var keywords = monitor_content_conf.split("/");
+    var keywords = monitor_content.split("/");
 
     // 检查文本是否包含任一关键词
     for (var i = 0; i < keywords.length; i++) {
@@ -1884,7 +1886,7 @@ function startOnNotification () {
 
                             if (hasAllRequired) {
                                 // 按"/"分割监控内容（OR逻辑）
-                                var keywords = monitor_content_conf.split("/");
+                                var keywords = monitor_content.split("/");
 
                                 for (var i = 0; i < keywords.length; i++) {
                                     var keyword = keywords[i].trim();
@@ -4500,43 +4502,53 @@ while (true) {
                 store_btn.click();
                 console.info("[操作] 点击选择门店");
                 break; // 跳出当前代码块
-            }else{
+            } else {
                 var targetTextView = current_webview.find(className("android.widget.TextView").depth(25).algorithm('DFS'));
                 var shouldBreak = false; // 标志变量控制是否跳出
 
                 if (targetTextView) {
-                    // 查找indexInParent为11的TextView
-                    for (var k = 0; k < targetTextView.length; k++) {
-                        try {
-                            var tv = targetTextView[k];
-                            // 根据specs_btn的值决定使用不同的indexInParent
-                            var targetIndex = specs_btn ? 11 : 8;
-                            if (tv.indexInParent() === targetIndex) {
-                                var tvText = tv.text();
-                                console.info("[操作] 找到目标TextView，文本内容: " + tvText);
+                    // 1) 未设置监控门店名：暂停脚本并提示
+                    var monitoringShopRaw = (monitoring_shop_name || "").toString().trim();
+                    if (!monitoringShopRaw) {
+                        script_status = 0;
+                        ui.post(() => {
+                            stop();
+                        });
+                        toast("未选定对应门店。");
+                        shouldBreak = true;
+                    } else {
+                        // 2) 已设置门店名：按'/'分割并取第一个作为目标门店
+                        var shopNameToUse = monitoringShopRaw.split('/')[0].trim();
+                        // 查找indexInParent为11或8的TextView
+                        for (var k = 0; k < targetTextView.length; k++) {
+                            try {
+                                var tv = targetTextView[k];
+                                var targetIndex = specs_btn ? 11 : 8;
+                                if (tv.indexInParent() === targetIndex) {
+                                    var tvText = tv.text();
+                                    console.info("[操作] 找到目标TextView，文本内容: " + tvText);
 
-                                // 检查text是否为"佛山顺德万象汇"
-                                if (tvText !== "保定万博广场") {
-                                    console.info("[操作] 文本不是'"+tvText+"'，执行点击操作");
-                                    tv.click();
-                                    console.info("[操作] 成功点击目标TextView");
-
-                                    // 等待400ms
-                                    sleep(400);
-                                    shouldBreak = true; // 设置跳出标志
-                                    break; // 点击后跳出循环
-                                } else {
-                                    console.info("[操作] 文本已经是'"+tvText+"'，无需点击");
+                                    // 将原来的固定值对比替换为配置的门店名
+                                    if (tvText !== shopNameToUse) {
+                                        console.info("[操作] 文本不是'" + shopNameToUse + "'，执行点击操作");
+                                        tv.click();
+                                        console.info("[操作] 成功点击目标TextView");
+                                        sleep(400);
+                                        shouldBreak = true;
+                                        break;
+                                    } else {
+                                        console.info("[操作] 文本已经是'" + shopNameToUse + "'，无需点击");
+                                    }
                                 }
+                            } catch (e) {
+                                console.error("[操作] 处理TextView时出错: " + e.message);
                             }
-                        } catch (e) {
-                            console.error("[操作] 处理TextView时出错: " + e.message);
                         }
                     }
                 } else {
                     console.warn("[操作] 未找到depth为25的TextView");
                 }
-                // 如果执行了点击操作，跳出整个代码块
+                // 如果执行了点击操作或触发暂停，跳出整个代码块
                 if (shouldBreak) {
                     break;
                 }
@@ -4848,8 +4860,13 @@ while (true) {
                         var curent_node = get_current_node(webview_parent_node);
                         var update_view = get_current_webview_fast(curent_node);
 
-                        // 遍历所有TextView查找"保定"
-                        console.info("[操作] 开始查找保定TextView");
+                        // 依据监控门店名称解析店名与城市前缀
+                        var monitoringShopRaw = (monitoring_shop_name || "").toString().trim();
+                        var shopNameToUse = monitoringShopRaw ? monitoringShopRaw.split('/') [0].trim() : "保定万博广场";
+                        var cityPrefix = monitoringShopRaw ? shopNameToUse.slice(0, 2) : "保定";
+
+                        // 遍历所有TextView查找目标城市前缀
+                        console.info("[操作] 开始查找" + cityPrefix + "TextView");
                         var textViews = update_view.find(className("android.widget.TextView").algorithm('DFS'));
                         var foundFoshan = false;
 
@@ -4858,7 +4875,7 @@ while (true) {
                                 var textView = textViews[i];
                                 var textContent = textView.text();
 
-                                if (textContent && textContent.includes("保定")) {
+                                if (textContent && textContent.includes(cityPrefix)) {
                                     textView.click();
                                     console.info("[操作] 成功点击TextView: " + textContent);
                                     foundFoshan = true;
@@ -4869,7 +4886,7 @@ while (true) {
                                     var curent_node = get_current_node(webview_parent_node);
                                     var update_view = get_current_webview_fast(curent_node);
 
-                                    console.info("[操作] 开始查找保定万博广场TextView");
+                                    console.info("[操作] 开始查找" + shopNameToUse + "TextView");
                                     var textViews2 = update_view.find(className("android.widget.TextView").algorithm('DFS'));
                                     var foundWanxianghui = false;
 
@@ -4878,7 +4895,7 @@ while (true) {
                                             var textView2 = textViews2[j];
                                             var text2 = textView2.text();
 
-                                            if (text2 && text2.includes("保定万博广场")) {
+                                            if (text2 && text2.includes(shopNameToUse)) {
                                                 textView2.click();
                                                 console.info("[操作] 成功点击TextView: " + text2);
                                                 foundWanxianghui = true;

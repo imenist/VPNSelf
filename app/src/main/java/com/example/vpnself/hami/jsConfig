@@ -13,11 +13,18 @@
     "help": "填写需要监控群聊名称（需要勾选一键群控才生效）"
   },
   {
-    "name": "monitor_content",
+    "name": "monitor_content_conf",
     "type": "text",
     "label": "监控内容关键字",
     "textarea": "1",
     "help": "请输入需要匹配的关键字，使用 “/” 分割"
+  },
+  {
+    "name": "monitoring_shop_name_conf",
+    "type": "text",
+    "label": "监控门店名称",
+    "textarea": "1",
+    "help": "请输入需要匹配的监控门店名称，使用 “/” 分割"
   },
   {
     "name": "refresh_mode_conf",
