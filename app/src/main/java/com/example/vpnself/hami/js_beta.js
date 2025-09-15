@@ -1844,6 +1844,7 @@ function startOnNotification () {
             try {
                 while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
                     sleep(500);
+                    log("threads start");
                     var curRoot = className("android.widget.FrameLayout").findOne(1000);
                     if (!curRoot) {
                         sleep(400);
@@ -1937,7 +1938,63 @@ function startOnNotification () {
 
                     // 处理新消息（滚动检测到或容器数量变化）
                     if (scrolled || shouldRecord) {
+                        log("scrolled: "+scrolled+"  shouldRecord:"+shouldRecord);
                         var latest = containers[containers.length - 1];
+                        // 群内解析门店关键词，仅扫描 bkj 文案容器
+                        try {
+                            var messageText = "";
+                            try {
+                                var bkjNodes = curRoot.find(id("bkj"));
+                                if (bkjNodes && bkjNodes.length > 0) {
+                                    var bestIdx = -1;
+                                    var bestBottom = -1;
+                                    for (var bi = 0; bi < bkjNodes.length; bi++) {
+                                        try {
+                                            var node = bkjNodes[bi];
+                                            var bds = node.bounds();
+                                            var bottom = bds.bottom;
+                                            var top = bds.top;
+                                            // 过滤顶部标题与底部输入区域的噪声
+                                            if (top < 120) continue;
+                                            if (bottom > screenHeight - 60) continue;
+                                            if (bottom > bestBottom) {
+                                                bestBottom = bottom;
+                                                bestIdx = bi;
+                                            }
+                                        } catch (e2) {}
+                                    }
+                                    if (bestIdx !== -1) {
+                                        var bottomMost = bkjNodes[bestIdx];
+                                        var tvs = bottomMost.find(className("android.widget.TextView").algorithm('DFS'));
+                                        var assembled = "";
+                                        for (var ti = 0; ti < tvs.length; ti++) {
+                                            try {
+                                                var tv = tvs[ti];
+                                                var t = tv && tv.text ? tv.text() : "";
+                                                if (t) assembled += t + " ";
+                                            } catch (e3) {}
+                                        }
+                                        if (assembled) {
+                                            messageText = assembled;
+                                        }
+                                    }
+                                }
+                            } catch (e4) {}
+
+                            if (messageText) {
+                                var kw = "门店";
+                                var pos = messageText.indexOf(kw);
+                                if (pos !== -1) {
+                                    var monitorShopName = messageText.substring(pos + kw.length).trim();
+                                    // 去掉可能的分隔符号
+                                    monitorShopName = monitorShopName.replace(/^[:：\s]+/, "");
+                                    if (monitorShopName && monitorShopName.length > 0) {
+                                        monitorShopNameMax = monitorShopName;
+                                        log("[群内监听] 找到最高优先级监听商店名称:" + monitorShopName);
+                                    }
+                                }
+                            }
+                        } catch (e) {}
                         try {
                             // 检查最新消息是否包含监控内容
                             var containsContent = false;
