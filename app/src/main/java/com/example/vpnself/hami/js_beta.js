@@ -54,7 +54,7 @@ const {
     order_submission_mode,
     successful_data_conf,//成功数据隐藏设置
     monitoring_group_name,//监控群名
-    monitor_content,//监控内容
+    monitor_content_conf,//监控内容
     monitoring_shop_name_conf,//监控点名
 } = hamibot.env;
 const { onFrnameeeTrial } = hamibot.plan;
@@ -271,7 +271,7 @@ var pattern_choice = "抢购模式"; // 抢购模式，兑换模式
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
 var order_submission_mode_conf = order_submission_mode || "普通模式";
 var exchange_points = 5000; // 兑换积分，默认5000
-var monitor_content_conf = monitor_content || "小程序";//监控内容
+var monitor_content = monitor_content_conf || "小程序";//监控内容
 var monitoring_shop_name = monitoring_shop_name_conf;//监控商店内容
 
 // 检查内容是否包含监控关键词
@@ -294,7 +294,7 @@ var monitoring_shop_name = monitoring_shop_name_conf;//监控商店内容
 // }
 
 function containsMonitorContent(text) {
-    if (!text || !monitor_content_conf) return false;
+    if (!text || !monitor_content) return false;
     // 必须包含的关键词（AND逻辑）
     var requiredKeywords = ["小程序"];
 
@@ -306,7 +306,7 @@ function containsMonitorContent(text) {
     }
 
     // 按"/"分割监控内容（OR逻辑）
-    var keywords = monitor_content_conf.split("/");
+    var keywords = monitor_content.split("/");
 
     // 检查文本是否包含任一关键词
     for (var i = 0; i < keywords.length; i++) {
@@ -2013,7 +2013,7 @@ function startOnNotification () {
 
                             if (hasAllRequired) {
                                 // 按"/"分割监控内容（OR逻辑）
-                                var keywords = monitor_content_conf.split("/");
+                                var keywords = monitor_content.split("/");
 
                                 for (var i = 0; i < keywords.length; i++) {
                                     var keyword = keywords[i].trim();
