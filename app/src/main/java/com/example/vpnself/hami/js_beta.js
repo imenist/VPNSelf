@@ -1844,7 +1844,7 @@ function startOnNotification () {
             try {
                 while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
                     sleep(500);
-                    log("threads start");
+//                    log("threads start");
                     var curRoot = className("android.widget.FrameLayout").findOne(1000);
                     if (!curRoot) {
                         sleep(400);
@@ -1882,7 +1882,7 @@ function startOnNotification () {
                     // 检测容器数量变化，需要记录小程序文案
                     var shouldRecord = false;
                     if (lastContainerCount !== containers.length) {
-                       // log("[群内监听] 检测到容器数量从" + lastContainerCount + "变为" + containers.length);
+                        log("[群内监听] 检测到容器数量从" + lastContainerCount + "变为" + containers.length);
                         shouldRecord = true;
                     }
 
@@ -1937,7 +1937,7 @@ function startOnNotification () {
 
 
                     // 处理新消息（滚动检测到或容器数量变化）
-                    if (scrolled || shouldRecord) {
+                    if (scrolled) {
                         log("scrolled: "+scrolled+"  shouldRecord:"+shouldRecord);
                         var latest = containers[containers.length - 1];
                         // 群内解析门店关键词，仅扫描 bkj 文案容器
@@ -1946,33 +1946,58 @@ function startOnNotification () {
                             try {
                                 var bkjNodes = curRoot.find(id("bkj"));
                                 if (bkjNodes && bkjNodes.length > 0) {
-                                    var bestIdx = -1;
-                                    var bestBottom = -1;
-                                    for (var bi = 0; bi < bkjNodes.length; bi++) {
-                                        try {
-                                            var node = bkjNodes[bi];
-                                            var bds = node.bounds();
-                                            var bottom = bds.bottom;
-                                            var top = bds.top;
-                                            // 过滤顶部标题与底部输入区域的噪声
-                                            if (top < 120) continue;
-                                            if (bottom > screenHeight - 60) continue;
-                                            if (bottom > bestBottom) {
-                                                bestBottom = bottom;
-                                                bestIdx = bi;
-                                            }
-                                        } catch (e2) {}
+                                    var latestTop = -1;
+                                    try { latestTop = latest.bounds().top; } catch (e2) {}
+
+                                    // 优先：选择紧贴在最新小程序容器之上的 bkj（bottom < latest.top 且 bottom 最大）
+                                    var chosenIdx = -1;
+                                    var chosenBottom = -1;
+                                    if (latestTop !== -1) {
+                                        for (var bi = 0; bi < bkjNodes.length; bi++) {
+                                            try {
+                                                var node = bkjNodes[bi];
+                                                var bds = node.bounds();
+                                                var bottom = bds.bottom;
+                                                var top = bds.top;
+                                                // 过滤顶部标题与底部输入区域的噪声
+                                                if (top < 120) continue;
+                                                if (bottom > screenHeight - 60) continue;
+                                                if (bottom < latestTop && bottom > chosenBottom) {
+                                                    chosenBottom = bottom;
+                                                    chosenIdx = bi;
+                                                }
+                                            } catch (e3) {}
+                                        }
                                     }
-                                    if (bestIdx !== -1) {
-                                        var bottomMost = bkjNodes[bestIdx];
-                                        var tvs = bottomMost.find(className("android.widget.TextView").algorithm('DFS'));
+
+                                    // 退化：若未找到紧邻上方的 bkj，则取全局最靠底部的 bkj
+                                    if (chosenIdx === -1) {
+                                        for (var bi2 = 0; bi2 < bkjNodes.length; bi2++) {
+                                            try {
+                                                var node2 = bkjNodes[bi2];
+                                                var bds2 = node2.bounds();
+                                                var bottom2 = bds2.bottom;
+                                                var top2 = bds2.top;
+                                                if (top2 < 120) continue;
+                                                if (bottom2 > screenHeight - 60) continue;
+                                                if (bottom2 > chosenBottom) {
+                                                    chosenBottom = bottom2;
+                                                    chosenIdx = bi2;
+                                                }
+                                            } catch (e4) {}
+                                        }
+                                    }
+
+                                    if (chosenIdx !== -1) {
+                                        var targetBKJ = bkjNodes[chosenIdx];
+                                        var tvs = targetBKJ.find(className("android.widget.TextView").algorithm('DFS'));
                                         var assembled = "";
                                         for (var ti = 0; ti < tvs.length; ti++) {
                                             try {
                                                 var tv = tvs[ti];
                                                 var t = tv && tv.text ? tv.text() : "";
                                                 if (t) assembled += t + " ";
-                                            } catch (e3) {}
+                                            } catch (e5) {}
                                         }
                                         if (assembled) {
                                             messageText = assembled;
@@ -1991,6 +2016,7 @@ function startOnNotification () {
                                     if (monitorShopName && monitorShopName.length > 0) {
                                         monitorShopNameMax = monitorShopName;
                                         log("[群内监听] 找到最高优先级监听商店名称:" + monitorShopName);
+                                        lastMiniProgramCaption = null;
                                     }
                                 }
                             }
