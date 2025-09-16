@@ -1497,7 +1497,7 @@ function isFlexibleMatch(text, keyword) {
     return regex.test(lowerText);
 }
 
-function getLatestWeChatMessage() {
+function getLatestWeChatMessage(title) {
     try {
         // 确保在微信界面
         if (currentPackage() !== "com.tencent.mm") {
@@ -1607,7 +1607,7 @@ function recordLastMiniProgramCaption(containers) {
         var caption = getMiniProgramCaptionFromContainer(last);
         if (caption) {
             lastMiniProgramCaption = caption;
-        //  log("[群内监听] 初始小程序文案记录: " + caption);
+          log("[群内监听] 初始小程序文案记录: " + caption);
         } else {
             lastMiniProgramCaption = null;
         }
@@ -1706,26 +1706,44 @@ function startOnNotification () {
           if (title === monitoring_group_name && containsMonitorContent(text) && !has_been_started) {
             isProcessingNotification = true;
             try {
+                setTimeout(function() {
+                    // 使用线程执行，避免阻塞通知回调
+                    if (device.isScreenOn() === false) {
+                            log("[操作] 检测到屏幕未亮屏，先亮屏并解锁");
+                            device.wakeUp();
+                            sleep(300); // 等待屏幕点亮
+
+                            // 向上滑动解锁
+                            var screenHeight = device.height;
+                            var screenWidth = device.width;
+                            var startY = screenHeight * 0.8;
+                            var endY = screenHeight * 0.2;
+                            var centerX = screenWidth / 2;
+
+                            swipe(centerX, startY, centerX, endY, 300);
+                            sleep(500); // 等待解锁完成
+                            log("[操作] 屏幕解锁完成");
+                        }
+                  },2000); // 等待页面加载
+
                 notification.click();
                 log("[操作] 点击消息栏");
                 // 使用setTimeout替代sleep，避免阻塞UI线程
                 setTimeout(function() {
                   // 使用线程执行，避免阻塞通知回调
                   threads.start(function() {
-                    var result = getLatestWeChatMessage();
-                    sleep(2000);
-                    if (!page_info || !result) {
-
+                    var result = getLatestWeChatMessage(title);
+                    if (!result) {
                         lastMiniProgramCaption = null;
                         home();
                         sleep(1000);
                         launchApp("微信");
                         sleep(1000);
                         getLatestWeChatMessage();
-                        isProcessingNotification = false; // 重置通知处理标志
+                       // isProcessingNotification = false; // 重置通知处理标志
                     }
                   });
-                }, 2000); // 等待页面加载
+                }, 3000); // 等待页面加载
 
             } catch (e) {
                 console.error("点击消息栏失败: " + e.message);
@@ -1845,6 +1863,13 @@ function startOnNotification () {
                 while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
                     sleep(500);
 //                    log("threads start");
+
+                    // 检查是否有通知处理正在进行中，避免冲突
+                    if (isProcessingNotification) {
+                        sleep(200);
+                        continue;
+                    }
+
                     var curRoot = className("android.widget.FrameLayout").findOne(1000);
                     if (!curRoot) {
                         sleep(400);
@@ -1879,12 +1904,12 @@ function startOnNotification () {
                     }
                    // log("containers: "+containers.length+" groupMsgContainerCount:"+groupMsgContainerCount);
 
-                    // 检测容器数量变化，需要记录小程序文案
-                    var shouldRecord = false;
-                    if (lastContainerCount !== containers.length) {
-                        log("[群内监听] 检测到容器数量从" + lastContainerCount + "变为" + containers.length);
-                        shouldRecord = true;
-                    }
+                    // // 检测容器数量变化，需要记录小程序文案
+                    // var shouldRecord = false;
+                    // if (lastContainerCount !== containers.length) {
+                    //     log("[群内监听] 检测到容器数量从" + lastContainerCount + "变为" + containers.length);
+                    //     shouldRecord = true;
+                    // }
 
                     // 检测容器内容变化（容器替换情况）
                     var curFirstTop = -1;
@@ -1913,32 +1938,32 @@ function startOnNotification () {
                             // 如果文案不同，说明有新消息
                             if (currentCaption && currentCaption !== lastMiniProgramCaption) {
                                 scrolled = true;
-                              //  log("[滚动检测] 检测到容器内容变化: 旧文案='" + lastMiniProgramCaption + "' -> 新文案='" + currentCaption + "'");
+                                log("[滚动检测] 检测到容器内容变化: 旧文案='" + lastMiniProgramCaption + "' -> 新文案='" + currentCaption + "'");
                             }
                         } catch (e) {}
                     }
-
                     // 备用检测：坐标变化检测
-                    if (!scrolled && lastFirstTop !== -1 && curFirstTop !== -1) {
-                        var topChanged = Math.abs(curFirstTop - lastFirstTop) >= 10;
-                        if (topChanged) {
-                            scrolled = true;
-                           // log("[滚动检测] 检测到顶部位置变化: " + lastFirstTop + " -> " + curFirstTop + " (差值: " + (curFirstTop - lastFirstTop) + ")");
-                        }
-                    }
+                    // if (!scrolled && lastFirstTop !== -1 && curFirstTop !== -1) {
+                    //     var topChanged = Math.abs(curFirstTop - lastFirstTop) >= 5;
+                    //     if (topChanged) {
+                    //         scrolled = true;
+                    //         log("[滚动检测] 检测到顶部位置变化: " + lastFirstTop + " -> " + curFirstTop + " (差值: " + (curFirstTop - lastFirstTop) + ")");
+                    //     }
+                    // }
 
                     if (!scrolled && lastLastBottom !== -1 && curLastBottom !== -1) {
-                        var bottomChanged = Math.abs(curLastBottom - lastLastBottom) >= 10;
+                        var bottomChanged = Math.abs(curLastBottom - lastLastBottom) >= 5;
                         if (bottomChanged) {
                             scrolled = true;
-                         //   log("[滚动检测] 检测到底部位置变化: " + lastLastBottom + " -> " + curLastBottom + " (差值: " + (curLastBottom - lastLastBottom) + ")");
+                            log("[滚动检测] 检测到底部位置变化: " + lastLastBottom + " -> " + curLastBottom + " (差值: " + (curLastBottom - lastLastBottom) + ")");
                         }
                     }
 
 
                     // 处理新消息（滚动检测到或容器数量变化）
                     if (scrolled) {
-                        log("scrolled: "+scrolled+"  shouldRecord:"+shouldRecord);
+                        log("scrolled: "+scrolled);
+                        sleep(500);
                         var latest = containers[containers.length - 1];
                         // 群内解析门店关键词，仅扫描 bkj 文案容器
                         try {
@@ -2115,7 +2140,7 @@ function startOnNotification () {
 
                     // 重置检测标志
                     scrolled = false;
-                    shouldRecord = false;
+                    // shouldRecord = false;
 
                     sleep(200);
                 }
@@ -3899,6 +3924,8 @@ function startPaymentProcess() {
         }
     }
 
+var shouldBreak = false; // 标志变量控制是否跳出主循环
+
 while (true) {
 
     // 定时器检查 - 如果设置了自动结束时间且已超时，则退出脚本
@@ -3943,6 +3970,7 @@ while (true) {
         purchasee_pagee_count = 0;
         confirm_positioning_value = null;
         textViewInfoAdded = false; // 重置TextView信息添加标记
+        shouldBreak = false; // 重置跳出标志
 
         // 使用更长的延迟，减少CPU占用
         sleep(100);
@@ -4685,8 +4713,6 @@ while (true) {
                 }
                 break; // 跳出当前代码块
             }else{
-                var shouldBreak = false; // 标志变量控制是否跳出
-
                 // 在purchase_type_btn下方查找第一个深度为25的TextView
                 if (purchase_type_btn) {
                     try {
