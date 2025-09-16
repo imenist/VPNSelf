@@ -1920,7 +1920,7 @@ function startOnNotification () {
 
                     // 备用检测：坐标变化检测
                     if (!scrolled && lastFirstTop !== -1 && curFirstTop !== -1) {
-                        var topChanged = Math.abs(curFirstTop - lastFirstTop) >= 1;
+                        var topChanged = Math.abs(curFirstTop - lastFirstTop) >= 10;
                         if (topChanged) {
                             scrolled = true;
                            // log("[滚动检测] 检测到顶部位置变化: " + lastFirstTop + " -> " + curFirstTop + " (差值: " + (curFirstTop - lastFirstTop) + ")");
@@ -1928,7 +1928,7 @@ function startOnNotification () {
                     }
 
                     if (!scrolled && lastLastBottom !== -1 && curLastBottom !== -1) {
-                        var bottomChanged = Math.abs(curLastBottom - lastLastBottom) >= 1;
+                        var bottomChanged = Math.abs(curLastBottom - lastLastBottom) >= 10;
                         if (bottomChanged) {
                             scrolled = true;
                          //   log("[滚动检测] 检测到底部位置变化: " + lastLastBottom + " -> " + curLastBottom + " (差值: " + (curLastBottom - lastLastBottom) + ")");
