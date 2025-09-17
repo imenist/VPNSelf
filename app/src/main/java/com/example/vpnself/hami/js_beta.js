@@ -1497,7 +1497,133 @@ function isFlexibleMatch(text, keyword) {
     return regex.test(lowerText);
 }
 
-function getLatestWeChatMessage(title) {
+// 兜底：当常规路径无法从微信消息容器定位到小程序时，
+// 尝试基于通知文本在整页扫描并点击疑似小程序文案
+function findClickableInAncestors(node) {
+    try {
+        var cur = node;
+        while (cur) {
+            if (cur.clickable && cur.clickable()) {
+                return cur;
+            }
+            cur = cur.parent();
+        }
+    } catch (e) {}
+    return null;
+}
+
+function extractTargetTitleFromNotifText(notifText) {
+    try {
+        if (!notifText) return null;
+        if (notifText.indexOf("[小程序]") !== -1) {
+            var idx = notifText.indexOf("[小程序]");
+            var tail = notifText.substring(idx + "[小程序]".length);
+            tail = (tail || "").replace(/^[\s:：\-\u3000]+/, '').trim();
+            if (tail) return tail;
+        }
+    } catch (e) {}
+    return null;
+}
+
+function findContainerForNode(node, maxHops) {
+    try {
+        var cur = node;
+        var hops = 0;
+        while (cur && hops < (maxHops || 6)) {
+            var cls = cur.className && cur.className();
+            if (cls === "android.widget.LinearLayout" || cls === "android.widget.FrameLayout" || cls === "android.widget.RelativeLayout") {
+                if (cur.childCount && cur.childCount() > 0) return cur;
+            }
+            cur = cur.parent();
+            hops++;
+        }
+    } catch (e) {}
+    return null;
+}
+
+function fallbackClickMiniProgramFromNotificationText(notifText) {
+    try {
+        var targetTitle = extractTargetTitleFromNotifText(notifText);
+
+        // 优先策略：直接在全局 TextView 中查找与 targetTitle 匹配的文本
+        if (targetTitle) {
+            var tvs = className("android.widget.TextView").find();
+            var best = null;
+            var bestScore = -1;
+            for (var i = 0; i < tvs.length; i++) {
+                try {
+                    var tv = tvs[i];
+                    var t = (tv.text() || '').trim();
+                    if (!t) continue;
+                    var score = -1;
+                    if (t.indexOf(targetTitle) !== -1 || targetTitle.indexOf(t) !== -1) {
+                        score = 2;
+                    } else if (isFlexibleMatch(t, targetTitle)) {
+                        score = 1;
+                    }
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = tv;
+                    }
+                } catch (e) {}
+            }
+            if (best && bestScore >= 1) {
+                var clickableNode = best.findOne(clickable(true)) || findClickableInAncestors(best);
+                if (clickableNode) {
+                    clickableNode.click();
+                    return true;
+                } else {
+                    var b = best.bounds();
+                    click(b.centerX(), b.centerY());
+                    return true;
+                }
+            }
+        }
+
+        // 备选策略：根据 “小程序” 锚点推断邻近文案并点击
+        var anchors = className("android.widget.TextView").textContains("小程序").find();
+        if (anchors && anchors.length > 0) {
+            // 选择屏幕上最后出现的锚点（更可能是最新消息）
+            var anchor = anchors[anchors.length - 1];
+            var container = findContainerForNode(anchor, 8) || anchor.parent();
+            if (container) {
+                // 在容器内寻找最可能作为文案的 TextView（排除包含“小程序”的自身）
+                var cTvs = container.find(className("android.widget.TextView").algorithm('DFS'));
+                var caption = null;
+                for (var j = cTvs.length - 1; j >= 0; j--) {
+                    try {
+                        var tv2 = cTvs[j];
+                        var txt2 = (tv2.text() || '').trim();
+                        if (txt2 && txt2.indexOf("小程序") === -1) {
+                            caption = tv2;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+                var clickTarget = container.findOne(clickable(true)) || findClickableInAncestors(caption || container) || caption || container;
+                if (clickTarget) {
+                    if (clickTarget.click) {
+                        clickTarget.click();
+                    } else {
+                        var bb = clickTarget.bounds();
+                        click(bb.centerX(), bb.centerY());
+                    }
+                    return true;
+                }
+            }
+        }
+
+        // 最后退化：直接点击屏幕上任意可点击且包含“小程序”的区域
+        var anyClickable = clickable(true).textContains("小程序").findOne(500);
+        if (anyClickable) {
+            anyClickable.click();
+            return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+function getLatestWeChatMessage(text) {
     try {
         // 确保在微信界面
         if (currentPackage() !== "com.tencent.mm") {
@@ -1516,15 +1642,52 @@ function getLatestWeChatMessage(title) {
             return false;
         }
 
-        // 记录最后一条小程序文案
-        recordLastMiniProgramCaption(messageContainers);
+        // 从通知文本中提取小程序标题并匹配页面上的小程序文案
+        var targetTitle = null;
+        try { log("[通知] 传入文本: " + text); } catch (e) {}
+        if (text && text.indexOf("[小程序]") !== -1) {
+            var idx = text.indexOf("[小程序]");
+            var tail = text.substring(idx + "[小程序]".length);
+            tail = (tail || "").replace(/^[\s:：\-\u3000]+/, '').trim();
+            if (tail) {
+                targetTitle = tail;
+                log("[通知] 提取小程序文案: " + targetTitle);
+            }
+        }
 
-        // 如果只有一个，直接使用
+        // 收集当前页面所有小程序文案（bjy结构）
+        var containersWithCaption = [];
+        for (var i = 0; i < messageContainers.length; i++) {
+            try {
+                var c = messageContainers[i];
+                var cap = getMiniProgramCaptionFromContainer(c);
+                if (cap) {
+                    containersWithCaption.push({ idx: i, container: c, caption: cap });
+                }
+            } catch (e) {}
+        }
+
+        // 选择包含通知文案的且最靠后的一个
         var latestMessage = null;
-        if (messageContainers.length === 1) {
-            latestMessage = messageContainers[0];
-        } else {
-            // 如果有多个，直接选择最后一个
+        if (targetTitle && containersWithCaption.length > 0) {
+            var matched = [];
+            for (var j = 0; j < containersWithCaption.length; j++) {
+                var item = containersWithCaption[j];
+                var capText = (item.caption || '').trim();
+                if (!capText) continue;
+                // 包含判断，尽量宽松
+                if (capText.indexOf(targetTitle) !== -1 || targetTitle.indexOf(capText) !== -1) {
+                    matched.push(item);
+                }
+            }
+            if (matched.length > 0) {
+                latestMessage = matched[matched.length - 1].container;
+                log("[匹配] 命中小程序文案: " + matched[matched.length - 1].caption);
+            }
+        }
+
+        // 若未命中或未提供通知文案，回退为最后一个
+        if (!latestMessage) {
             latestMessage = messageContainers[messageContainers.length - 1];
         }
 
@@ -1541,6 +1704,8 @@ function getLatestWeChatMessage(title) {
             clickableChild.click();
             return true;
         }
+        // 若容器内未找到可点击元素，尝试兜底
+        return false;
 
 
 
@@ -1732,18 +1897,12 @@ function startOnNotification () {
                 setTimeout(function() {
                   // 使用线程执行，避免阻塞通知回调
                   threads.start(function() {
-                    var result = getLatestWeChatMessage(title);
+                    var result = getLatestWeChatMessage(text);
                     if (!result) {
-                        lastMiniProgramCaption = null;
-                        home();
-                        sleep(1000);
-                        launchApp("微信");
-                        sleep(1000);
-                        getLatestWeChatMessage();
-                       // isProcessingNotification = false; // 重置通知处理标志
+                        fallbackClickMiniProgramFromNotificationText(text);
                     }
                   });
-                }, 3000); // 等待页面加载
+                }, 1500); // 等待页面加载
 
             } catch (e) {
                 console.error("点击消息栏失败: " + e.message);
