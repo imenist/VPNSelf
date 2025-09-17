@@ -5256,14 +5256,23 @@ while (true) {
                         }
 
                         // 现在shopNames始终是数组，统一处理逻辑
-                        var cityPrefix = shopNames.length > 0 ? shopNames[0].slice(0, 2) : "";
 
 
                         // 从shopNames数组中随机选择一个门店名进行点击
                         if (shopNames.length > 0) {
                             var randomIndex = Math.floor(Math.random() * shopNames.length);
                             var selectedShopName = shopNames[randomIndex];
-                            var cityPrefix = selectedShopName.slice(0, 2); // 获取前两个字
+                            var cityPrefix = "";
+                            try {
+                                var idxShi = selectedShopName.indexOf("市");
+                                if (idxShi > 0) {
+                                    cityPrefix = selectedShopName.substring(0, idxShi);
+                                } else {
+                                    cityPrefix = selectedShopName.slice(0, 2);
+                                }
+                            } catch (e) {
+                                cityPrefix = selectedShopName.slice(0, 2);
+                            }
                             var selectedShopNamecount = 0; // 门店选择重试计数器
                             var webview_parent_node = get_webview_parent_node();
                             var curent_node = get_current_node(webview_parent_node);
