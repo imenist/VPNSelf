@@ -5374,6 +5374,35 @@ while (true) {
                                             }
                                         }
 
+                                        // 二步匹配：若完整店名未命中，则移除城市名前缀（含可选“市”）后再匹配
+                                        if (!foundShop) {
+                                            try {
+                                                var altName = (selectedShopName || "").trim();
+                                                if (altName && cityPrefix && altName.indexOf(cityPrefix) === 0) {
+                                                    altName = altName.substring(cityPrefix.length);
+                                                    if (altName.length > 0 && altName.charAt(0) === "市") {
+                                                        altName = altName.substring(1);
+                                                    }
+                                                }
+                                                altName = altName.replace(/^[\s:：\-]+/, "").trim();
+
+                                                for (var j2 = 0; j2 < textViews2.length; j2++) {
+                                                    try {
+                                                        var tv2b = textViews2[j2];
+                                                        var t2b = tv2b.text();
+                                                        if (t2b && isFlexibleMatch(t2b, altName)) {
+                                                            tv2b.click();
+                                                            console.info("[操作] 选择门店(二步) " + t2b);
+                                                            foundShop = true;
+                                                            monitorShopNameMax = null;
+                                                            selectedShopNamecount = 0;
+                                                            break;
+                                                        }
+                                                    } catch (e6) {}
+                                                }
+                                            } catch (e5) {}
+                                        }
+
                                         if (!foundShop) {
                                             console.warn("[操作] 未找到" + selectedShopName);
                                             if(selectedShopNamecount <= 0){
