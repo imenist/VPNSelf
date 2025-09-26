@@ -1,5 +1,5 @@
 // 文档地址：https://docs.hamibot.com/
-var scriptCode = "25.10.1P";
+var scriptCode = "25.10.1J";
 auto.waitFor()
 var has_been_started = false;
 var groupMessageListenerStarted = false; // 已在群内的消息监听是否已启动
@@ -7,6 +7,7 @@ var lastWeChatMsgSignature = ""; // 上次最新消息签名（用于判重）
 var groupMsgContainerCount = -1; // 群聊消息容器上次的数量（用于size对比）
 var lastContainerCount = -1; // 记录上一次的容器数量，用于检测变化
 var noContainerRetryCount = 0; // 记录连续找不到容器的次数
+var noContainerRetryCountbjz = 0; // 记录连续找不到容器的次数
 var lastMiniProgramCaption = null; // 记录最近一次的小程序文案(biq)，用于对比是否变化
 var isProcessingNotification = false; // 防止通知点击重复执行
 var notificationListenerActive = true; // 通知监听器是否激活
@@ -17,9 +18,9 @@ var notificationListenerActive = true; // 通知监听器是否激活
 // 获取并显示屏幕尺寸信息
 var screenWidth = device.width;
 var screenHeight = device.height;
-// console.info('[屏幕信息] 屏幕宽度: ' + screenWidth + 'px, 屏幕高度: ' + screenHeight + 'px');
-// console.info('[窗口位置] 脚本将放置在屏幕右侧贴边，顶部25%位置');
 var monitorShopNameMax = null; //最高优先级监听商店名称
+var globalNotificationText = null; // 存储通知文本，用于门店选择跳过逻辑
+var skipStoreSelection = false; // 全局标志：是否跳过门店选择
 
 const {
     delivery,
@@ -56,6 +57,7 @@ const {
     monitoring_group_name,//监控群名
     monitor_content_conf,//监控内容
     monitoring_shop_name_conf,//监控点名
+    purchase_reduced_conf,//购买数量减少设置
 } = hamibot.env;
 const { onFrnameeeTrial } = hamibot.plan;
 // 获取Hamibot设备信息
@@ -123,32 +125,19 @@ var textViewInfoAdded = false;// 标记是否已经添加过TextView信息
 // 获取指定索引的TextView文本并存储到全局变量
 function getSpecificTextViews(current_node) {
     try {
-        // 如果已经添加过TextView信息，则跳过
         if (textViewInfoAdded) {
             return;
         }
-
         var updated_webview = get_current_webview_fast(current_node);
         if (updated_webview) {
             var textViews = updated_webview.find(className("android.widget.TextView").algorithm('DFS'));
-
-            // 保存原有的全局变量内容
             var originalInfo = globalTextViewInfo.slice();
-
-            // 重置全局变量
             globalTextViewInfo = [];
-
-            // 先添加原有的信息
             for (var i = 0; i < originalInfo.length; i++) {
                 globalTextViewInfo.push(originalInfo[i]);
             }
-
-            // 根据购买类型决定是否指定索引
-            // 查找"订单详情"的位置
             var orderDetailIndex = -1;
             var targetTexts = [];
-
-            // 先找到"订单详情"的位置
             for (var i = 0; i < textViews.length; i++) {
                 try {
                     var textView = textViews[i];
@@ -161,9 +150,7 @@ function getSpecificTextViews(current_node) {
                 } catch (e) {
                 }
             }
-
             if (orderDetailIndex !== -1) {
-                // 根据购买类型确定第一个要获取的textView索引
                 var firstIndex;
                 if (purchase_type === '到店取') {
                     firstIndex = 1; // 到店取：获取索引1的textView
@@ -183,8 +170,6 @@ function getSpecificTextViews(current_node) {
                         firstIndex = -1;
                     }
                 }
-
-                // 获取第一个textView的文本
                 if (firstIndex < textViews.length) {
                     try {
                         var firstTextView = textViews[firstIndex];
@@ -196,8 +181,6 @@ function getSpecificTextViews(current_node) {
                 } else {
                     targetTexts.push("");
                 }
-
-                // 获取"订单详情"后三个textView的文本（统一逻辑）
                 for (var j = 1; j <= 3; j++) {
                     var targetIndex = orderDetailIndex + j;
                     if (targetIndex < textViews.length) {
@@ -212,18 +195,14 @@ function getSpecificTextViews(current_node) {
                         targetTexts.push("");
                     }
                 }
-
-                // 保存到globalTextViewInfo中
                 for (var k = 0; k < targetTexts.length; k++) {
                     globalTextViewInfo.push(targetTexts[k]);
                 }
             } else {
-                // 未找到"订单详情"时的默认逻辑
                 for (var i = 0; i < 4; i++) {
                     globalTextViewInfo.push("网络异常获取失败");
                 }
             }
-
             textViewInfoAdded = true;// 标记已经添加过TextView信息
         } else {
             console.warn("[TextView信息] 无法获取webview，无法提取TextView信息");
@@ -250,6 +229,7 @@ var purchase_type = delivery || "到店取";
 var refresh_mode = refresh_mode_conf || "智能刷"; // 刷新模式：智能刷，切换刷，页面刷
 var purchase_count = parseInt(purchase_count_conf) || 1;
 var specs = specs_conf || "单个";
+var spec_selection = 2; // 选择规格变量，默认值为2
 var refresh_delay = parseInt(delay_conf) || 600;
 var select_index = parseInt(select_index_conf) || 1; // 选择索引配置，1代表第一个选项，2代表第二个选项，以此类推
 var extra_delay = parseInt(extra_delay_conf) || 0;
@@ -267,10 +247,11 @@ var password_or_vibrate = password_or_vibrate_conf || "震动(不设置密码)";
 var password_setting = parseInt(password_setting_conf) || 123456;
 var timeout_sleep_wait_time = parseInt(timeout_sleep_wait_time_conf) || 0;
 var special_confirm_delay = parseInt(special_confirm_delay_conf) || 400;
-var pattern_choice = "抢购模式"; // 抢购模式，兑换模式
+var pattern_choice = "抢购模式"; // 抢购模式，兑换模式，盒机模式
 var hide_sleep_time = parseFloat(hide_sleep_time_conf) || 0;
 var order_submission_mode_conf = order_submission_mode || "普通模式";
 var exchange_points = 5000; // 兑换积分，默认5000
+var keyword_text = ""; // 关键词，默认为空
 var monitor_content = monitor_content_conf || "小程序";//监控内容
 var monitoring_shop_name = monitoring_shop_name_conf;//监控商店内容
 
@@ -308,14 +289,17 @@ function containsMonitorContent(text) {
     // 按"/"分割监控内容（OR逻辑）
     var keywords = monitor_content.split("/");
 
-    // 检查文本是否包含任一关键词
+    // 检查文本是否包含任一关键词（使用模糊匹配）
     for (var i = 0; i < keywords.length; i++) {
         var keyword = keywords[i].trim();
-        if (keyword && text.includes(keyword)) {
-            log("[触发] 关键词：" + keyword );
-            // 检测并设置配送方式
-            // detectAndSetPurchaseType(text);
-            return true;
+        if (keyword) {
+            // log("[调试] 检查关键词: " + keyword + " 在文本: " + text);
+            if (isFlexibleMatch(text, keyword)) {
+                log("[触发] 关键词：" + keyword );
+                // 检测并设置配送方式
+                // detectAndSetPurchaseType(text);
+                return true;
+            }
         }
     }
     return false;
@@ -348,23 +332,27 @@ var confirm_positioning_value = null;
 var paymentThreadStartTime = 0;
 
 var wechatNotificationListener = null;
-// === 坐标缓存系统 (参考 JS_hongzhong.js) ===
+
 var cached_confirm_info_coords = null; // 缓存"确认信息并支付"按钮坐标
 var cached_double_confirm_coords = null; // 缓存"确认无误"按钮坐标
 var cached_double_exactly_coords = null; // 缓存"就是这家"按钮坐标
-var cached_buy_now_webview_coords = null; // 缓存"立即购买"按钮坐标（webview模式专用）
-var cached_confirm_coords = null; // 缓存"确定"按钮坐标
+var cached_confirm_pay_coords = null; // 缓存"确认支付"按钮坐标
 var calibration_status = {
     confirm_info: false,
     double_confirm: false,
-    double_exactly: false
+    double_exactly: false,
+    confirm_pay: false
 };
+// 添加点击状态跟踪，确保顺序点击
+var confirmInfoClicked = false;
+var doubleConfirmClicked = false;
 
 // 预计算坐标对象
 var precomputedCoords = {
     confirm_info: { x: 0, y: 0 },
     double_confirm: { x: 0, y: 0 },
-    double_exactly: { x: 0, y: 0 }
+    double_exactly: { x: 0, y: 0 },
+    confirm_pay: { x: 0, y: 0 }
 };
 
 //console.info('[欢迎使用]  抢购脚本');
@@ -389,10 +377,10 @@ console.error('确定按钮点击后等待时间: ', special_confirm_delay + "ms
 //console.info('[坐标缓存] 正在加载已保存的坐标...');
 loadCoordinatesFromStorage();
 // 初始化时检查校准状态
-if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
-    // 只显示弹窗提示，用户点击确定即可
-    dialogs.alert('校准提示', '请先完成按钮校准后再启动脚本\n\n请在脚本中点击  【设置】 ，并找到  【校准按钮】  点击，并按照文字信息对应页面按钮逐一校准');
-}
+// if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
+//     // 只显示弹窗提示，用户点击确定即可
+//     dialogs.alert('校准提示', '请先完成按钮校准后再启动脚本\n\n请在脚本中点击  【设置】 ，并找到  【校准按钮】  点击，并按照文字信息对应页面按钮逐一校准');
+// }
 
 var storage = storages.create('GITPOP');
 var w = floaty.window(
@@ -401,9 +389,11 @@ var w = floaty.window(
 <button id="info_box" text="智能刷" bg="#80000000" color="#ffffff" w="56" h="25" marginBottom="8" textSize="10sp" padding="0" gravity="center" />
 <button id="pattern_choice_btn" text={pattern_choice} bg="#FF8C00" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
 <button id="delivery_type" text={purchase_type} bg="#0f57f7" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
+<button id="spec_selection_btn" text="选择规格" bg="#FF9800" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" visibility="gone" />
 <button id="purchase_count_btn" text={"数量: " + purchase_count} bg="#752092" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
 <button id="settings" text="设置" bg="#000000" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" />
 <button id="consume_points_btn" text="消耗积分" bg="#FF6B6B" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" visibility="gone" />
+<button id="total_amount_btn" text="商品词" bg="#000000" color="#ffffff" w="56" h="45" marginBottom="8" textSize="12sp" visibility="gone" />
 <horizontal>
 <button id="start" text="开始" bg="#E83828" w="56" h="45" visibility="visible" textSize="12sp"/>
 <button id="end" text="停止" bg="#f9ca5e" w="56" h="45" visibility="gone" textSize="12sp" />
@@ -431,9 +421,11 @@ function setRoundedBg(view, colorHex, radiusDp) {
 setRoundedBg(w.info_box, '#80000000', 6);
 setRoundedBg(w.pattern_choice_btn, '#FF8C00', 6);
 setRoundedBg(w.delivery_type, (purchase_type === '送到家') ? '#E83828' : '#0f57f7', 6);
+setRoundedBg(w.spec_selection_btn, '#FF9800', 6);
 setRoundedBg(w.purchase_count_btn, '#752092', 6);
 setRoundedBg(w.settings, '#000000', 6);
 setRoundedBg(w.consume_points_btn, '#FF6B6B', 6);
+setRoundedBg(w.total_amount_btn, '#000000', 6);
 setRoundedBg(w.start, '#E83828', 6);
 setRoundedBg(w.end, '#f9ca5e', 6);
 
@@ -479,6 +471,9 @@ function updateInfoBox() {
             if (pattern_choice === '兑换模式') {
                 // 兑换模式：显示兑换积分
                 w.info_box.setText(exchange_points.toString());
+            } else if (pattern_choice === '盒机模式') {
+                // 盒机模式：显示盒机状态
+                w.info_box.setText("盒机模式");
             } else {
                 // 抢购模式：显示刷新模式状态
                 w.info_box.setText(refresh_mode);
@@ -489,16 +484,80 @@ function updateInfoBox() {
     }
 }
 
+// 统一的UI同步函数，确保所有模式切换时UI状态正确
+function syncUIForMode() {
+    try {
+        ui.post(() => {
+            // 先隐藏所有可能显示的按钮
+            w.info_box.attr('visibility', 'gone');
+            w.pattern_choice_btn.attr('visibility', 'gone');
+            w.delivery_type.attr('visibility', 'gone');
+            w.settings.attr('visibility', 'gone');
+            w.purchase_count_btn.attr('visibility', 'gone');
+            w.consume_points_btn.attr('visibility', 'gone');
+            w.total_amount_btn.attr('visibility', 'gone');
+            w.spec_selection_btn.attr('visibility', 'gone');
+
+            // 根据当前模式显示对应的按钮
+            if (pattern_choice === '抢购模式') {
+                // 抢购模式：显示info_box, pattern_choice_btn, delivery_type, purchase_count_btn, settings
+                w.info_box.attr('visibility', 'visible');
+                w.pattern_choice_btn.attr('visibility', 'visible');
+                w.delivery_type.attr('visibility', 'visible');
+                w.purchase_count_btn.attr('visibility', 'visible');
+                w.settings.attr('visibility', 'visible');
+                w.consume_points_btn.attr('visibility', 'gone');
+                w.total_amount_btn.attr('visibility', 'gone');
+                w.spec_selection_btn.attr('visibility', 'gone');
+
+                // 设置窗口高度
+                w.main_window.attr('h', '308');
+
+                // 更新信息框
+                w.info_box.setText(refresh_mode);
+
+            } else if (pattern_choice === '兑换模式') {
+                // 兑换模式：显示info_box, pattern_choice_btn, purchase_count_btn, consume_points_btn
+                w.info_box.attr('visibility', 'visible');
+                w.pattern_choice_btn.attr('visibility', 'visible');
+                w.purchase_count_btn.attr('visibility', 'visible');
+                w.consume_points_btn.attr('visibility', 'visible');
+                w.total_amount_btn.attr('visibility', 'gone');
+                w.spec_selection_btn.attr('visibility', 'gone');
+                w.delivery_type.attr('visibility', 'gone');
+                w.settings.attr('visibility', 'gone');
+
+                // 设置窗口高度
+                w.main_window.attr('h', '255');
+
+                // 更新信息框
+                w.info_box.setText(exchange_points.toString());
+
+            } else if (pattern_choice === '盒机模式') {
+                // 盒机模式：显示info_box, pattern_choice_btn, spec_selection_btn, purchase_count_btn, total_amount_btn
+                w.info_box.attr('visibility', 'visible');
+                w.pattern_choice_btn.attr('visibility', 'visible');
+                w.spec_selection_btn.attr('visibility', 'visible');
+                w.purchase_count_btn.attr('visibility', 'visible');
+                w.total_amount_btn.attr('visibility', 'visible');
+                w.delivery_type.attr('visibility', 'gone');
+                w.settings.attr('visibility', 'gone');
+                w.consume_points_btn.attr('visibility', 'gone');
+
+                // 设置窗口高度：14(图片) + 3(边距) + 25(info_box) + 8(边距) + 45(pattern_choice_btn) + 8(边距) + 45(spec_selection_btn) + 8(边距) + 45(purchase_count_btn) + 8(边距) + 45(total_amount_btn) + 8(边距) + 45(开始按钮) = 300
+                w.main_window.attr('h', '308');
+
+                // 更新信息框
+                w.info_box.setText("盒机模式");
+            }
+        });
+    } catch (e) {
+        console.error("[UI同步] 同步失败: " + e.message);
+    }
+}
+
 
 function updateStorage() {
-    if (script_start_immediately_conf) {
-        // 使用ui.post确保UI操作在UI线程中执行
-        ui.post(() => {
-            start();
-            console.error("[自动启动] 脚本已自动启动");
-        });
-        return;
-    }
     // 确认信息并支付点击后等待时间
     var s_ignore_ack_click_delay = storage.get("s_ignore_ack_click_delay");
     if (s_ignore_ack_click_delay !== null && s_ignore_ack_click_delay !== undefined && s_ignore_ack_click_delay !== '') {
@@ -542,6 +601,15 @@ function updateStorage() {
         } else {
     //        console.info('[坐标系统] 暂无存储的就是这家按钮坐标，首次识别时将自动存储');
         }
+
+    // 所有参数加载完成后，检查是否需要自动启动
+    if (script_start_immediately_conf) {
+        // 使用ui.post确保UI操作在UI线程中执行
+        ui.post(() => {
+            start();
+            console.error("[自动启动] 脚本已自动启动");
+        });
+    }
 }
 var deviceInfo = getHamibotDeviceInfo();
 //var globalTextViewInfo = [special_confirm_delay, ignore_ack_click_delay, ignore_ack_click_confirm_delay, deviceInfo.hamibot.deviceName, deviceInfo.device.brand, deviceInfo.device.model];
@@ -552,16 +620,8 @@ updateInfoBox();
 //存储storage
 updateStorage();
 
-// 根据当前模式设置正确的UI高度
-ui.post(() => {
-    if (pattern_choice === '兑换模式') {
-        // 兑换模式：14+3+25+8+45+8+45+8+45=201px
-        w.main_window.attr('h', '255');
-    } else {
-        // 抢购模式：14+3+25+8+45+8+45+8+45+8+45=264px
-        w.main_window.attr('h', '308');
-    }
-});
+// 根据当前模式设置正确的UI状态
+syncUIForMode();
 
 // 初始化定时器 - 脚本自带功能，用户无需知道
 if (script_auto_exit_time > 0) {
@@ -573,41 +633,41 @@ if (script_auto_exit_time > 0) {
 function start() {
     has_been_started = false;
     // 检查校准状态
-    if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
-        // 停止脚本
-        script_status = 0;
+    // if (!calibration_status.confirm_info || !calibration_status.double_confirm || !calibration_status.double_exactly) {
+    //     // 停止脚本
+    //     script_status = 0;
 
-        // 先显示弹窗提示，等待用户点击确定后再执行后续操作
-        dialogs.alert('校准提示', '❌ 检测到按钮坐标未校准，请先完成按钮校准后再启动脚本')
-            .then(function() {
-                // 用户点击确定后，自动打开设置菜单中的校准按钮子菜单
-                var items = Object.keys(settingsConfig);
-                var calibrateButtonIndex = items.indexOf('校准按钮');
-                if (calibrateButtonIndex >= 0) {
-                    var selectedItem = items[calibrateButtonIndex];
-                    var config = settingsConfig[selectedItem];
-                    showSubmenuSetting(selectedItem, config);
-                } else {
-                    // 如果找不到校准按钮，则显示普通设置菜单
-                    showSettingsMenu();
-                }
-            })
-            .catch(function() {
-                // 如果弹窗被取消，也执行相同的操作
-                var items = Object.keys(settingsConfig);
-                var calibrateButtonIndex = items.indexOf('校准按钮');
-                if (calibrateButtonIndex >= 0) {
-                    var selectedItem = items[calibrateButtonIndex];
-                    var config = settingsConfig[selectedItem];
-                    showSubmenuSetting(selectedItem, config);
-                } else {
-                    // 如果找不到校准按钮，则显示普通设置菜单
-                    showSettingsMenu();
-                }
-            });
+    //     // 先显示弹窗提示，等待用户点击确定后再执行后续操作
+    //     dialogs.alert('校准提示', '❌ 检测到按钮坐标未校准，请先完成按钮校准后再启动脚本')
+    //         .then(function() {
+    //             // 用户点击确定后，自动打开设置菜单中的校准按钮子菜单
+    //             var items = Object.keys(settingsConfig);
+    //             var calibrateButtonIndex = items.indexOf('校准按钮');
+    //             if (calibrateButtonIndex >= 0) {
+    //                 var selectedItem = items[calibrateButtonIndex];
+    //                 var config = settingsConfig[selectedItem];
+    //                 showSubmenuSetting(selectedItem, config);
+    //             } else {
+    //                 // 如果找不到校准按钮，则显示普通设置菜单
+    //                 showSettingsMenu();
+    //             }
+    //         })
+    //         .catch(function() {
+    //             // 如果弹窗被取消，也执行相同的操作
+    //             var items = Object.keys(settingsConfig);
+    //             var calibrateButtonIndex = items.indexOf('校准按钮');
+    //             if (calibrateButtonIndex >= 0) {
+    //                 var selectedItem = items[calibrateButtonIndex];
+    //                 var config = settingsConfig[selectedItem];
+    //                 showSubmenuSetting(selectedItem, config);
+    //             } else {
+    //                 // 如果找不到校准按钮，则显示普通设置菜单
+    //                 showSettingsMenu();
+    //             }
+    //         });
 
-        return;
-    }
+    //     return;
+    // }
 
     script_status = 1;
     start_time = new Date().getTime();
@@ -633,6 +693,8 @@ function start() {
         w.purchase_count_btn.attr('visibility', 'gone');
         w.settings.attr('visibility', 'gone');
         w.consume_points_btn.attr('visibility', 'gone');
+        w.total_amount_btn.attr('visibility', 'gone');
+        w.spec_selection_btn.attr('visibility', 'gone');
         w.info_box.attr('visibility', 'visible');
 
         // 设置info_box的文本内容为当前模式
@@ -658,31 +720,8 @@ function stop() {
             w.pattern_choice_btn.attr('visibility', 'visible');
             w.info_box.attr('visibility', 'visible');
 
-            // 根据模式调整UI显示
-            if (pattern_choice === '兑换模式') {
-                // 兑换模式：显示purchase_count_btn, consume_points_btn, start
-                w.delivery_type.attr('visibility', 'gone');
-                w.settings.attr('visibility', 'gone');
-                w.purchase_count_btn.attr('visibility', 'visible');
-                w.consume_points_btn.attr('visibility', 'visible');
-                w.info_box.setText(exchange_points.toString());
-            } else {
-                // 抢购模式：显示delivery_type, purchase_count_btn, settings, start
-                w.delivery_type.attr('visibility', 'visible');
-                w.settings.attr('visibility', 'visible');
-                w.purchase_count_btn.attr('visibility', 'visible');
-                w.consume_points_btn.attr('visibility', 'gone');
-                w.info_box.setText(refresh_mode);
-            }
-
-            // 恢复main_window原始高度
-            if (pattern_choice === '兑换模式') {
-                // 兑换模式：14+3+25+8+45+8+45+8+45=201px
-                w.main_window.attr('h', '255');
-            } else {
-                // 抢购模式：14+3+25+8+45+8+45+8+45+8+45=264px
-                w.main_window.attr('h', '308');
-            }
+            // 使用统一的UI同步函数确保所有按钮状态正确
+            syncUIForMode();
         });
 
         // 清空globalTextViewInfo数组
@@ -704,6 +743,9 @@ function stop() {
     confirmButtonExecuted = false; // 标记是否已执行确认按钮逻辑
     purchasee_pagee_count = 0;
     textViewInfoAdded = false; // 重置TextView信息添加标记
+    confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+    doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
+    confirmBtnEnterCount = 0; // 回流计数器
 }
 
 w.start.click(function () {
@@ -737,51 +779,34 @@ w.delivery_type.click(function () {
 
 // 添加模式切换按钮点击事件
 w.pattern_choice_btn.click(function () {
+    // 模式循环切换：抢购模式 → 兑换模式 → 盒机模式 → 抢购模式
     if (pattern_choice === '抢购模式') {
         pattern_choice = '兑换模式';
-        // 使用ui.post确保UI操作在UI线程中执行
-        ui.post(() => {
-            w.pattern_choice_btn.setText(pattern_choice);
-            setRoundedBg(w.pattern_choice_btn, '#FF6B6B', 6); // 红色
-        });
-
-        // 隐藏抢购模式相关按钮
-        w.delivery_type.attr('visibility', 'gone');
-        w.settings.attr('visibility', 'gone');
-
-        // 显示消耗积分按钮
-        w.consume_points_btn.attr('visibility', 'visible');
-
-        // 调整UI高度为兑换模式：14+3+25+8+45+8+45+8+45=201px
-        w.main_window.attr('h', '255');
-
-        // 更新info_box显示兑换积分
-        updateInfoBox();
-
-        toast('已切换到兑换模式');
+    } else if (pattern_choice === '兑换模式') {
+        pattern_choice = '盒机模式';
     } else {
         pattern_choice = '抢购模式';
-        // 使用ui.post确保UI操作在UI线程中执行
-        ui.post(() => {
-            w.pattern_choice_btn.setText(pattern_choice);
-            setRoundedBg(w.pattern_choice_btn, '#FF8C00', 6); // 橙色
-        });
-
-        // 显示抢购模式相关按钮
-        w.delivery_type.attr('visibility', 'visible');
-        w.settings.attr('visibility', 'visible');
-
-        // 隐藏消耗积分按钮
-        w.consume_points_btn.attr('visibility', 'gone');
-
-        // 调整UI高度为抢购模式：14+3+25+8+45+8+45+8+45+8+45=264px
-        w.main_window.attr('h', '308');
-
-        // 更新info_box显示刷新模式
-        updateInfoBox();
-
-        toast('已切换到抢购模式');
     }
+
+    // 更新按钮文本和颜色
+    ui.post(() => {
+        w.pattern_choice_btn.setText(pattern_choice);
+
+        // 根据模式设置不同的颜色
+        if (pattern_choice === '抢购模式') {
+            setRoundedBg(w.pattern_choice_btn, '#FF8C00', 6); // 橙色
+        } else if (pattern_choice === '兑换模式') {
+            setRoundedBg(w.pattern_choice_btn, '#FF6B6B', 6); // 红色
+        } else if (pattern_choice === '盒机模式') {
+            setRoundedBg(w.pattern_choice_btn, '#9B59B6', 6); // 紫色
+        }
+    });
+
+    // 使用统一的UI同步函数确保所有按钮状态正确
+    syncUIForMode();
+
+    // 显示切换提示
+    toast('已切换到' + pattern_choice);
 });
 
 // 添加消耗积分按钮点击事件
@@ -830,6 +855,49 @@ w.purchase_count_btn.click(function () {
                     toast('购买数量已设置为: ' + num);
                 } else {
                     toast('请输入有效的数字');
+                }
+            }
+        });
+});
+
+// 添加关键词按钮点击事件
+w.total_amount_btn.click(function () {
+    dialogs.rawInput('请输入关键词', keyword_text)
+        .then(function(inputValue) {
+            if (inputValue !== null && inputValue !== '') {
+                keyword_text = inputValue;
+                w.total_amount_btn.setText("关键词");
+                toast('关键词已设置为: ' + keyword_text);
+            } else if (inputValue === '') {
+                keyword_text = "";
+                w.total_amount_btn.setText("关键词");
+                toast('关键词已清空');
+            }
+        });
+});
+
+// 添加选择规格按钮点击事件
+w.spec_selection_btn.click(function () {
+    // 使用简单的数字输入形式
+    dialogs.rawInput("选择购买规格（数字）1为单个，2为整端（默认），特殊款为选择框排列填写数字", spec_selection)
+        .then(function(inputValue) {
+            if (inputValue !== null && inputValue !== '') {
+                var numValue = parseInt(inputValue);
+                // 检查是否为有效数字
+                if (isNaN(numValue) || inputValue !== numValue.toString()) {
+                    // 输入非数字，恢复默认值
+                    spec_selection = 2;
+                    w.spec_selection_btn.setText("规格: " + spec_selection);
+                    console.error('输入格式错误，已恢复默认值: ' + spec_selection);
+                } else if (numValue > 0) {
+                    spec_selection = numValue;
+                    w.spec_selection_btn.setText("规格: " + spec_selection);
+                    console.info('购买规格已设置为: ' + spec_selection);
+                } else {
+                    // 输入0或负数，恢复默认值
+                    spec_selection = 2;
+                    w.spec_selection_btn.setText("规格: " + spec_selection);
+                    console.error('请输入大于0的数字，已恢复默认值: ' + spec_selection);
                 }
             }
         });
@@ -944,15 +1012,20 @@ w.custom_image.setOnTouchListener(function(view, event) {
                 if (!isInterfaceHidden) {
                     // 界面未隐藏时，短按隐藏
                     if (pressDuration < 250 && !customImageLongPressed) {
-                        // 隐藏指定按钮
+                        // 隐藏所有按钮，只保留图片、info_box和开始/停止按钮
                         ui.post(() => {
-                            w.info_box.attr('visibility', 'gone');
+                            w.info_box.attr('visibility', 'visible');
+                            w.info_box.setText(pattern_choice); // 显示当前模式
+                            w.pattern_choice_btn.attr('visibility', 'gone');
                             w.delivery_type.attr('visibility', 'gone');
                             w.purchase_count_btn.attr('visibility', 'gone');
                             w.settings.attr('visibility', 'gone');
+                            w.consume_points_btn.attr('visibility', 'gone');
+                            w.total_amount_btn.attr('visibility', 'gone');
+                            w.spec_selection_btn.attr('visibility', 'gone');
 
-                            // 调整窗口高度，只保留图片部分
-                            w.main_window.attr('h', '62'); // 14(图片) + 3(边距) +45(按钮)
+                            // 调整窗口高度，只保留图片、info_box和开始/停止按钮
+                            w.main_window.attr('h', '95'); // 14(图片) + 3(边距) + 25(info_box) + 8(边距) + 45(按钮)
                         });
 
                         isInterfaceHidden = true;
@@ -961,16 +1034,8 @@ w.custom_image.setOnTouchListener(function(view, event) {
                 } else {
                     // 界面已隐藏时，长按恢复
                     if (pressDuration < 250 && !customImageLongPressed) {
-                        // 显示所有按钮
-                        ui.post(() => {
-                            w.info_box.attr('visibility', 'visible');
-                            w.delivery_type.attr('visibility', 'visible');
-                            w.purchase_count_btn.attr('visibility', 'visible');
-                            w.settings.attr('visibility', 'visible');
-
-                            // 恢复原始窗口高度
-                            w.main_window.attr('h', '307');
-                        });
+                        // 使用统一的UI同步函数恢复界面
+                        syncUIForMode();
 
                         isInterfaceHidden = false;
                         toast('UI界面已展开');
@@ -1117,53 +1182,53 @@ var settingsConfig = {
         console.info("[参数更新] 支付密码" );
     }
 },
-    '校准按钮': {
-        type: 'submenu',
-        description: '校准各种按钮的坐标',
-        submenu: function() {
-            var submenuItems = {};
+    // '校准按钮': {
+    //     type: 'submenu',
+    //     description: '校准各种按钮的坐标',
+    //     submenu: function() {
+    //         var submenuItems = {};
 
-            // 动态生成菜单项名称
-            var confirmInfoName = calibration_status.confirm_info ? '校准[确认信息并支付]按钮✔️' : '校准[确认信息并支付]按钮❌';
-            var doubleExactlyName = calibration_status.double_exactly ? '校准[就是这家]按钮✔️' : '校准[就是这家]按钮❌';
-            var doubleConfirmName = calibration_status.double_confirm ? '校准[确认无误]按钮✔️' : '校准[确认无误]按钮❌';
-            // var confirmName = calibration_status.confirm ? '校准[确定]按钮✔️' : '校准[确定]按钮❌';
+    //         // 动态生成菜单项名称
+    //         var confirmInfoName = calibration_status.confirm_info ? '校准[确认信息并支付]按钮✔️' : '校准[确认信息并支付]按钮❌';
+    //         var doubleExactlyName = calibration_status.double_exactly ? '校准[就是这家]按钮✔️' : '校准[就是这家]按钮❌';
+    //         var doubleConfirmName = calibration_status.double_confirm ? '校准[确认无误]按钮✔️' : '校准[确认无误]按钮❌';
+    //         // var confirmName = calibration_status.confirm ? '校准[确定]按钮✔️' : '校准[确定]按钮❌';
 
-            submenuItems[confirmInfoName] = {
-                type: 'action',
-                description: '定位"确认信息并支付"按钮坐标',
-                action: function() {
-                    toast('请导航到订单确认页面，然后点击确定');
-                    threads.start(() => {
-                        calibrateButton('确认信息并支付', 'confirm_info');
-                    });
-                }
-            };
+    //         submenuItems[confirmInfoName] = {
+    //             type: 'action',
+    //             description: '定位"确认信息并支付"按钮坐标',
+    //             action: function() {
+    //                 toast('请导航到订单确认页面，然后点击确定');
+    //                 threads.start(() => {
+    //                     calibrateButton('确认信息并支付', 'confirm_info');
+    //                 });
+    //             }
+    //         };
 
-            submenuItems[doubleExactlyName] = {
-                type: 'action',
-                description: '定位"就是这家"按钮坐标',
-                action: function() {
-                    toast('请导航到地址确认页面，然后点击确定');
-                    threads.start(() => {
-                        calibrateButton('就是这家', 'double_exactly');
-                    });
-                }
-            };
+    //         submenuItems[doubleExactlyName] = {
+    //             type: 'action',
+    //             description: '定位"就是这家"按钮坐标',
+    //             action: function() {
+    //                 toast('请导航到地址确认页面，然后点击确定');
+    //                 threads.start(() => {
+    //                     calibrateButton('就是这家', 'double_exactly');
+    //                 });
+    //             }
+    //         };
 
-            submenuItems[doubleConfirmName] = {
-                type: 'action',
-                description: '定位"确认无误"按钮坐标',
-                action: function() {
-                    toast('请导航到地址确认页面，然后点击确定');
-                    threads.start(() => {
-                        calibrateButton('确认无误', 'double_confirm');
-                    });
-                }
-            };
-            return submenuItems;
-        }
-    },
+    //         submenuItems[doubleConfirmName] = {
+    //             type: 'action',
+    //             description: '定位"确认无误"按钮坐标',
+    //             action: function() {
+    //                 toast('请导航到地址确认页面，然后点击确定');
+    //                 threads.start(() => {
+    //                     calibrateButton('确认无误', 'double_confirm');
+    //                 });
+    //             }
+    //         };
+    //         return submenuItems;
+    //     }
+    // },
     '隐藏脚本': {
         type: 'action',
         description: '隐藏悬浮窗一段时间',
@@ -1331,6 +1396,10 @@ function updatePrecomputedCoords() {
         precomputedCoords.double_exactly.x = cached_double_exactly_coords[0] + (cached_double_exactly_coords[2] - cached_double_exactly_coords[0]) / 2;
         precomputedCoords.double_exactly.y = cached_double_exactly_coords[1] + (cached_double_exactly_coords[3] - cached_double_exactly_coords[1]) / 2;
     }
+    if (cached_confirm_pay_coords && cached_confirm_pay_coords.length >= 4) {
+        precomputedCoords.confirm_pay.x = cached_confirm_pay_coords[0] + (cached_confirm_pay_coords[2] - cached_confirm_pay_coords[0]) / 2;
+        precomputedCoords.confirm_pay.y = cached_confirm_pay_coords[1] + (cached_confirm_pay_coords[3] - cached_confirm_pay_coords[1]) / 2;
+    }
 
     //console.info('[坐标缓存] 预计算坐标已更新');
    // console.info('[坐标缓存] 确认信息并支付: (' + precomputedCoords.confirm_info.x + ', ' + precomputedCoords.confirm_info.y + ')');
@@ -1339,64 +1408,64 @@ function updatePrecomputedCoords() {
 }
 
 // 校准按钮坐标 (通用函数)
-function calibrateButton(buttonTextArray, buttonType) {
-    //console.info('[坐标校准] 开始定位按钮: ' + JSON.stringify(buttonTextArray) + ', 类型: ' + buttonType);
+// function calibrateButton(buttonTextArray, buttonType) {
+//     //console.info('[坐标校准] 开始定位按钮: ' + JSON.stringify(buttonTextArray) + ', 类型: ' + buttonType);
 
-    try {
-        var targetElement = null;
-        var foundText = '';
+//     try {
+//         var targetElement = null;
+//         var foundText = '';
 
-        // 支持数组形式的按钮文本
-        if (Array.isArray(buttonTextArray)) {
-            for (var i = 0; i < buttonTextArray.length; i++) {
-                targetElement = className('android.widget.TextView').text(buttonTextArray[i]).findOne(3000);
-                if (targetElement) {
-                    foundText = buttonTextArray[i];
-                    break;
-                }
-            }
-        } else {
-            targetElement = className('android.widget.TextView').text(buttonTextArray).findOne(3000);
-            foundText = buttonTextArray;
-        }
+//         // 支持数组形式的按钮文本
+//         if (Array.isArray(buttonTextArray)) {
+//             for (var i = 0; i < buttonTextArray.length; i++) {
+//                 targetElement = className('android.widget.TextView').text(buttonTextArray[i]).findOne(3000);
+//                 if (targetElement) {
+//                     foundText = buttonTextArray[i];
+//                     break;
+//                 }
+//             }
+//         } else {
+//             targetElement = className('android.widget.TextView').text(buttonTextArray).findOne(3000);
+//             foundText = buttonTextArray;
+//         }
 
-        if (targetElement) {
-            var bounds = targetElement.bounds();
-            var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+//         if (targetElement) {
+//             var bounds = targetElement.bounds();
+//             var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
 
-            if (buttonType === 'confirm_info') {
-                cached_confirm_info_coords = coords;
-                calibration_status.confirm_info = true;
-            } else if (buttonType === 'double_confirm') {
-                cached_double_confirm_coords = coords;
-                calibration_status.double_confirm = true;
-            } else if (buttonType === 'double_exactly') {
-                cached_double_exactly_coords = coords;
-                calibration_status.double_exactly = true;
-            }
-            updatePrecomputedCoords();
+//             if (buttonType === 'confirm_info') {
+//                 cached_confirm_info_coords = coords;
+//                 calibration_status.confirm_info = true;
+//             } else if (buttonType === 'double_confirm') {
+//                 cached_double_confirm_coords = coords;
+//                 calibration_status.double_confirm = true;
+//             } else if (buttonType === 'double_exactly') {
+//                 cached_double_exactly_coords = coords;
+//                 calibration_status.double_exactly = true;
+//             }
+//             updatePrecomputedCoords();
 
-            // 如果是确定按钮，强制设置Y坐标为屏幕高度的91%
-            // if (buttonType === 'confirm') {
-            //     precomputedCoords.confirm.y = screenHeight * 0.91;
-            // }
+//             // 如果是确定按钮，强制设置Y坐标为屏幕高度的91%
+//             // if (buttonType === 'confirm') {
+//             //     precomputedCoords.confirm.y = screenHeight * 0.91;
+//             // }
 
-            console.info('[按钮校准] "' + foundText + '" 按钮定位成功');
-            toast('"' + foundText + '" 按钮定位成功');
+//             console.info('[按钮校准] "' + foundText + '" 按钮定位成功');
+//             toast('"' + foundText + '" 按钮定位成功');
 
-            // 保存到本地存储
-            saveCoordinatesToStorage();
+//             // 保存到本地存储
+//             saveCoordinatesToStorage();
 
-        } else {
-            var displayText = Array.isArray(buttonTextArray) ? buttonTextArray.join('或') : buttonTextArray;
-            console.warn('[按钮校准] 未找到 "' + displayText + '" 按钮');
-            toast('未找到 "' + displayText + '" 按钮，请确保在正确页面');
-        }
-    } catch (e) {
-        console.error('[按钮校准] 定位按钮时发生错误: ' + e);
-        toast('定位失败: ' + e);
-    }
-}
+//         } else {
+//             var displayText = Array.isArray(buttonTextArray) ? buttonTextArray.join('或') : buttonTextArray;
+//             console.warn('[按钮校准] 未找到 "' + displayText + '" 按钮');
+//             toast('未找到 "' + displayText + '" 按钮，请确保在正确页面');
+//         }
+//     } catch (e) {
+//         console.error('[按钮校准] 定位按钮时发生错误: ' + e);
+//         toast('定位失败: ' + e);
+//     }
+// }
 
 // 保存坐标到本地存储
 function saveCoordinatesToStorage() {
@@ -1409,6 +1478,9 @@ function saveCoordinatesToStorage() {
         }
         if (cached_double_exactly_coords) {
             storages.create("coordinate_cache").put("double_exactly_coords", JSON.stringify(cached_double_exactly_coords));
+        }
+        if (cached_confirm_pay_coords) {
+            storages.create("coordinate_cache").put("confirm_pay_coords", JSON.stringify(cached_confirm_pay_coords));
         }
         storages.create("coordinate_cache").put("calibration_status", JSON.stringify(calibration_status));
         console.info('[校准缓存] 已存储');
@@ -1435,6 +1507,11 @@ function loadCoordinatesFromStorage() {
         var doubleExactlyCoordsStr = storage.get("double_exactly_coords");
         if (doubleExactlyCoordsStr) {
             cached_double_exactly_coords = JSON.parse(doubleExactlyCoordsStr);
+        }
+
+        var confirmPayCoordsStr = storage.get("confirm_pay_coords");
+        if (confirmPayCoordsStr) {
+            cached_confirm_pay_coords = JSON.parse(confirmPayCoordsStr);
         }
 
         var calibrationStatusStr = storage.get("calibration_status");
@@ -1466,6 +1543,10 @@ function clickByCoordinates(buttonType) {
             x = precomputedCoords.double_exactly.x;
             y = precomputedCoords.double_exactly.y;
            // console.info('[坐标点击] 使用缓存坐标点击就是这家按钮: (' + x + ', ' + y + ')');
+        } else if (buttonType === 'confirm_pay' && calibration_status.confirm_pay) {
+            x = precomputedCoords.confirm_pay.x;
+            y = precomputedCoords.confirm_pay.y;
+           // console.info('[坐标点击] 使用缓存坐标点击确认支付按钮: (' + x + ', ' + y + ')');
         } else {
            // console.warn('[坐标点击] 坐标未校准，无法使用坐标点击: ' + buttonType);
             return false;
@@ -1489,12 +1570,32 @@ function isFlexibleMatch(text, keyword) {
     // 如果keyword为空，返回false
     if (lowerKeyword.length === 0) return false;
 
-    // 将keyword的每个字符用.*?连接，形成正则表达式
+    // 转义正则表达式特殊字符
+    var escapedKeyword = lowerKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // 将转义后的keyword的每个字符用.*?连接，形成正则表达式
     // .*? 表示非贪婪匹配任意字符
-    var regexPattern = lowerKeyword.split('').join('.*?');
+    var regexPattern = escapedKeyword.split('').join('.*?');
     var regex = new RegExp(regexPattern);
 
-    return regex.test(lowerText);
+    // 首先尝试精确匹配（包含空格和标点）
+    if (regex.test(lowerText)) {
+        return true;
+    }
+
+    // 如果精确匹配失败，尝试去除空格和标点符号后匹配
+    var cleanKeyword = lowerKeyword.replace(/[\s·•\-—–、，。！？：；（）【】《》「」『』〈〉〔〕〖〗〘〙〚〛]/g, '');
+    var cleanText = lowerText.replace(/[\s·•\-—–、，。！？：；（）【】《》「」『』〈〉〔〕〖〗〘〙〚〛]/g, '');
+
+    if (cleanKeyword.length > 0) {
+        var cleanEscapedKeyword = cleanKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var cleanRegexPattern = cleanEscapedKeyword.split('').join('.*?');
+        var cleanRegex = new RegExp(cleanRegexPattern);
+
+        return cleanRegex.test(cleanText);
+    }
+
+    return false;
 }
 
 // 兜底：当常规路径无法从微信消息容器定位到小程序时，
@@ -1541,7 +1642,7 @@ function findContainerForNode(node, maxHops) {
     return null;
 }
 
-function fallbackClickMiniProgramFromNotificationText(notifText) {
+function fallbackClickMiniProgramFromNotificationText(notifText, rootNode) {
     try {
         var targetTitle = extractTargetTitleFromNotifText(notifText);
 
@@ -1570,12 +1671,29 @@ function fallbackClickMiniProgramFromNotificationText(notifText) {
             if (best && bestScore >= 1) {
                 var clickableNode = best.findOne(clickable(true)) || findClickableInAncestors(best);
                 if (clickableNode) {
+                    try {
+                        var container = findContainerForNode(best, 8) || best.parent();
+                        if (container) {
+                            recordLastMiniProgramCaption([container], rootNode);
+                        }
+                    } catch (e) {}
+                    sleep(200);
+                    log("[操作] 点击小程序链接2");
                     clickableNode.click();
-                    return true;
+                    return;
                 } else {
+                    // 记录文案
+                    try {
+                        var container = findContainerForNode(best, 8) || best.parent();
+                        if (container) {
+                            recordLastMiniProgramCaption([container], rootNode);
+                        }
+                    } catch (e) {}
+                    sleep(200);
                     var b = best.bounds();
+                    log("[操作] 点击小程序链接3");
                     click(b.centerX(), b.centerY());
-                    return true;
+                    return;
                 }
             }
         }
@@ -1602,98 +1720,70 @@ function fallbackClickMiniProgramFromNotificationText(notifText) {
                 }
                 var clickTarget = container.findOne(clickable(true)) || findClickableInAncestors(caption || container) || caption || container;
                 if (clickTarget) {
+                    // 记录文案
+                    try {
+                        recordLastMiniProgramCaption([container]);
+                    } catch (e) {}
+                    sleep(200);
                     if (clickTarget.click) {
+                        log("[操作] 点击小程序链接4");
                         clickTarget.click();
                     } else {
                         var bb = clickTarget.bounds();
+                        log("[操作] 点击小程序链接5");
                         click(bb.centerX(), bb.centerY());
                     }
-                    return true;
+                    return;
                 }
             }
         }
 
-        // 最后退化：直接点击屏幕上任意可点击且包含“小程序”的区域
-        var anyClickable = clickable(true).textContains("小程序").findOne(500);
-        if (anyClickable) {
-            anyClickable.click();
-            return true;
-        }
-    } catch (e) {}
-    return false;
+        var clickX = Math.floor(screenWidth * 0.5);  // x50%
+        var clickY = Math.floor(screenHeight * 0.8); // y80%
+        log("[操作] 点击小程序链接(备用)");
+        click(clickX, clickY);
+
+    } catch (e) {
+        console.error("[点击] 点击小程序链接失败: " + e);
+        return;
+    }
+    return;
 }
 
-function getLatestWeChatMessage(text) {
+function getLatestWeChatMessage() {
     try {
         // 确保在微信界面
         if (currentPackage() !== "com.tencent.mm") {
-            return false;
+            return { success: false, rootNode: null };
         }
 
 
         // 获取当前页面的根节点
         var rootNode = className("android.widget.FrameLayout").findOne(1000);
         if (!rootNode) {
-            return false;
+            return { success: false, rootNode: null };
         }
 
         var messageContainers = rootNode.find(className("android.widget.LinearLayout").id("bjy"));
         if (!messageContainers || messageContainers.length === 0) {
-            return false;
+            return { success: false, rootNode: rootNode };
         }
 
-        // 从通知文本中提取小程序标题并匹配页面上的小程序文案
-        var targetTitle = null;
-        try { log("[通知] 传入文本: " + text); } catch (e) {}
-        if (text && text.indexOf("[小程序]") !== -1) {
-            var idx = text.indexOf("[小程序]");
-            var tail = text.substring(idx + "[小程序]".length);
-            tail = (tail || "").replace(/^[\s:：\-\u3000]+/, '').trim();
-            if (tail) {
-                targetTitle = tail;
-                log("[通知] 提取小程序文案: " + targetTitle);
-            }
-        }
+        // 记录最后一条小程序文案
+        recordLastMiniProgramCaption(messageContainers,rootNode);
 
-        // 收集当前页面所有小程序文案（bjy结构）
-        var containersWithCaption = [];
-        for (var i = 0; i < messageContainers.length; i++) {
-            try {
-                var c = messageContainers[i];
-                var cap = getMiniProgramCaptionFromContainer(c);
-                if (cap) {
-                    containersWithCaption.push({ idx: i, container: c, caption: cap });
-                }
-            } catch (e) {}
-        }
-
-        // 选择包含通知文案的且最靠后的一个
+        // 如果只有一个，直接使用
         var latestMessage = null;
-        if (targetTitle && containersWithCaption.length > 0) {
-            var matched = [];
-            for (var j = 0; j < containersWithCaption.length; j++) {
-                var item = containersWithCaption[j];
-                var capText = (item.caption || '').trim();
-                if (!capText) continue;
-                // 包含判断，尽量宽松
-                if (capText.indexOf(targetTitle) !== -1 || targetTitle.indexOf(capText) !== -1) {
-                    matched.push(item);
-                }
-            }
-            if (matched.length > 0) {
-                latestMessage = matched[matched.length - 1].container;
-                log("[匹配] 命中小程序文案: " + matched[matched.length - 1].caption);
-            }
-        }
-
-        // 若未命中或未提供通知文案，回退为最后一个
-        if (!latestMessage) {
+        if (messageContainers.length === 1) {
+            latestMessage = messageContainers[0];
+        } else {
+            // 如果有多个，直接选择最后一个
             latestMessage = messageContainers[messageContainers.length - 1];
         }
 
         if (!latestMessage) {
             log("消息获取错误");
-            return false;
+            return { success: false, rootNode: rootNode };
         }
 
         sleep(200);
@@ -1702,74 +1792,71 @@ function getLatestWeChatMessage(text) {
         if (clickableChild) {
             log("[操作] 点击小程序链接");
             clickableChild.click();
-            return true;
+            return { success: true, rootNode: rootNode };
         }
-        // 若容器内未找到可点击元素，尝试兜底
-        return false;
 
-
+        return { success: false, rootNode: rootNode };
 
     } catch (e) {
         log("点击微信消息失败: " + e.message);
-        return false;
+        return { success: false, rootNode: null };
 
     }
 }
 
 // 提取消息容器中“小程序”的文案（标题）
-function getMiniProgramCaptionFromContainer(container) {
+function getMiniProgramCaptionFromContainer(container, curRoot) {
     try {
         if (!container) return null;
-        var textViews = container.find(className("android.widget.TextView").algorithm('DFS'));
+
+        var textViews = container.find(className("android.widget.TextView").id("com.tencent.mm:id/biq"));
         if (!textViews || textViews.length === 0) return null;
+        var lastTextView = textViews[textViews.length - 1];
+        if (lastTextView) {
+            var txt = (lastTextView.text() || '').trim();
+            if (txt) {
+                // 在提取小程序文案时，检查biu TextView是否为"泡泡马特"
+                try {
+                    var biuTextViews = curRoot.find(className("android.widget.TextView").id("com.tencent.mm:id/biu").algorithm('DFS'));
+                    if (biuTextViews && biuTextViews.length > 0) {
+                        var lastBiuTextView = biuTextViews[biuTextViews.length - 1];
+                        if (lastBiuTextView) {
+                            var biuText = lastBiuTextView.text() || "";
+                            var trimmedBiuText = biuText.trim();
+                            if (trimmedBiuText !== "泡泡玛特") {
+                                return null;
+                            }
+                        }
+                    }
+                } catch (biuError) {
+                    log("[小程序检测] 检查biu TextView时出错: " + biuError.message);
+                    return null;
+                }
 
-        // 找到包含“小程序”的锚点位置（取最后一个）
-        var anchorIdx = -1;
-        for (var i = 0; i < textViews.length; i++) {
-            try {
-                var t = textViews[i].text();
-                if (t && t.indexOf("小程序") !== -1) {
-                    anchorIdx = i;
+                // 检查最后一个TextView且文案包含【】字符，则设置跳过门店选择标志
+                if (txt.includes('【') && txt.includes('】')) {
+                   // console.info("[操作] 检测小程序有门店地址，跳过门店选择" );
+                    skipStoreSelection = true;
+                }else{
+                    skipStoreSelection = false;
                 }
-            } catch (e) {}
-        }
-        if (anchorIdx === -1) return null;
-
-        // 以锚点为基准，向上寻找一个非空且不包含“小程序”的TextView作为文案
-        for (var j = anchorIdx - 1; j >= 0; j--) {
-            try {
-                var prev = textViews[j];
-                if (!prev) continue;
-                var txt = (prev.text() || '').trim();
-                if (txt && txt.indexOf("小程序") === -1) {
-                    return txt;
-                }
-            } catch (e) {}
-        }
-        // 若向上未找到，向后寻找
-        for (var k = anchorIdx + 1; k < textViews.length; k++) {
-            try {
-                var nxt = textViews[k];
-                if (!nxt) continue;
-                var txt2 = (nxt.text() || '').trim();
-                if (txt2 && txt2.indexOf("小程序") === -1) {
-                    return txt2;
-                }
-            } catch (e) {}
+                return txt;
+            }
         }
         return null;
     } catch (e) {
+        log("[小程序检测] getMiniProgramCaptionFromContainer函数出错: " + e.message);
         return null;
     }
 }
 
 // 在进入群页面时记录最后一条小程序文案
-function recordLastMiniProgramCaption(containers) {
+function recordLastMiniProgramCaption(containers, curRoot) {
     try {
         if (!containers || containers.length === 0) return;
         var last = containers[containers.length - 1];
         if (!last) return;
-        var caption = getMiniProgramCaptionFromContainer(last);
+        var caption = getMiniProgramCaptionFromContainer(last, curRoot);
         if (caption) {
             lastMiniProgramCaption = caption;
           log("[群内监听] 初始小程序文案记录: " + caption);
@@ -1870,6 +1957,8 @@ function startOnNotification () {
           // 消息推送
           if (title === monitoring_group_name && containsMonitorContent(text) && !has_been_started) {
             isProcessingNotification = true;
+            // 存储通知文本到全局变量，用于门店选择跳过逻辑
+            globalNotificationText = text;
             try {
                 setTimeout(function() {
                     // 使用线程执行，避免阻塞通知回调
@@ -1897,10 +1986,11 @@ function startOnNotification () {
                 setTimeout(function() {
                   // 使用线程执行，避免阻塞通知回调
                   threads.start(function() {
-                    var result = getLatestWeChatMessage(text);
-                    if (!result) {
-                        fallbackClickMiniProgramFromNotificationText(text);
+                    var result = getLatestWeChatMessage();
+                    if (!result.success) {
+                        fallbackClickMiniProgramFromNotificationText(text, result.rootNode);
                     }
+                    isProcessingNotification = false;
                   });
                 }, 1500); // 等待页面加载
 
@@ -1951,6 +2041,7 @@ function startOnNotification () {
   }
 
   function checkIfInWeChatGroup() {
+
     try {
         if (script_status == 0) {
             return false;
@@ -1959,7 +2050,10 @@ function startOnNotification () {
             return;
          }
     //    log("checkIfInWeChatGroup");
-
+        if (currentPackage() != "com.tencent.mm") {
+            groupMessageListenerStarted = false;
+            return;
+        }
             // 检查头部文字：ID为icon_tv，文本为"微信"，且selected状态为true
         var headerTextView = id("icon_tv").className("android.widget.TextView").text("微信").findOne(200);
         if (headerTextView) {
@@ -1975,54 +2069,39 @@ function startOnNotification () {
             return true;
         }
 
-        var rootNode = className("android.widget.FrameLayout").findOne(1000);
+        var rootNode = className("android.widget.FrameLayout").findOne(200);
         if (!rootNode) {
             return false;
         }
 
-        var titleView = className("android.widget.EditText").findOne(400);
+        var titleView = className("android.widget.EditText").findOne(200);
         if (!titleView) {
-            var speakButton = className("android.widget.ImageButton").id("bjz").findOne(400);
+            var speakButton = className("android.widget.ImageButton").id("bjz").findOne(200);
             if (!speakButton) {
                 return false;
             }
         }
-        // 初始化消息容器与滚动锚点
-        var containersInit = rootNode.find(className("android.widget.LinearLayout").id("bjy"));
+
+        var containersInit = rootNode.find(className("android.widget.TextView").id("com.tencent.mm:id/biq"));
         if (!containersInit) {
-            if (currentPackage() != "com.tencent.mm") {
-                log("[自动恢复] 检测不到微信元素");
-                home();
-                sleep(1000);
-                launchApp("微信");
-                sleep(1000);
-            }
-            return false;
+                 return false;
         }
         groupMsgContainerCount = containersInit.length; // 记录但不作为判定依据
-        // 记录进入页面时最后一条小程序文案
-        try { recordLastMiniProgramCaption(containersInit); } catch (e) {}
-     // log("groupMsgContainerCount:" + groupMsgContainerCount);
-        var lastFirstTop = -1;
-        var lastLastBottom = -1;
-        try {
-            if (containersInit.length > 0) {
-                var bFirstInit = containersInit[0].bounds();
-                lastFirstTop = bFirstInit.top;
-                var bLastInit = containersInit[containersInit.length - 1].bounds();
-                lastLastBottom = bLastInit.bottom;
-            }
-        } catch (e) {}
+        try { recordLastMiniProgramCaption(containersInit, rootNode); } catch (e) {}
+        //         }
+        //     }
+        // }
+
 
         groupMessageListenerStarted = true;
         lastContainerCount = -1; // 重置容器数量记录
         noContainerRetryCount = 0; // 重置重试计数
+        noContainerRetryCountbjz = 0;
         threads.start(function () {
             try {
                 while (groupMessageListenerStarted && !has_been_started && script_status == 1) {
                     sleep(500);
-//                    log("threads start");
-
+                    // log("threads start");
                     // 检查是否有通知处理正在进行中，避免冲突
                     if (isProcessingNotification) {
                         sleep(200);
@@ -2038,198 +2117,95 @@ function startOnNotification () {
                     if (!stillInGroup) {
                         var speakButton = className("android.widget.ImageButton").id("bjz").findOne(400);
                         if (!speakButton) {
-                            break;
-                        }
-                    }
-                    var containers = curRoot.find(className("android.widget.LinearLayout").id("bjy"));
-                    if (!containers || containers.length === 0) {
-                        noContainerRetryCount++;
-                        if (noContainerRetryCount >= 5) {
-                            home();
-                            log("[检测] 多次尝试聊天界面异常，返回设备主页等待消息栏消息推送");
-                            if (currentPackage() !== "com.tencent.mm") {
+                            noContainerRetryCountbjz++;
+                            // log("noContainerRetryCountbjz:"+noContainerRetryCountbjz);
+                            if (noContainerRetryCountbjz >= 5) {
+                                log("[检测] 不在微信群聊界面");
+                                if (currentPackage() == "com.tencent.mm") {
+                                    back();
+                                    sleep(1000);
+                                    break;
+                                }
                                 groupMessageListenerStarted = false;
+                                // 重置重试计数
+                                noContainerRetryCountbjz = 0;
                                 break;
                             }
-                            // 重置重试计数
-                            noContainerRetryCount = 0;
-                        }
 
                         sleep(200);
                         continue;
+                        }
                     } else {
                         // 找到容器了，重置重试计数
-                        noContainerRetryCount = 0;
+                        noContainerRetryCountbjz = 0;
                     }
-                   // log("containers: "+containers.length+" groupMsgContainerCount:"+groupMsgContainerCount);
-
-                    // // 检测容器数量变化，需要记录小程序文案
-                    // var shouldRecord = false;
-                    // if (lastContainerCount !== containers.length) {
-                    //     log("[群内监听] 检测到容器数量从" + lastContainerCount + "变为" + containers.length);
-                    //     shouldRecord = true;
-                    // }
-
-                    // 检测容器内容变化（容器替换情况）
-                    var curFirstTop = -1;
-                    var curLastBottom = -1;
+                    var containers = curRoot.find(className("android.widget.TextView").id("com.tencent.mm:id/biq"));
+                    if (!containers) {
+                        continue;
+                    }
                     var scrolled = false;
-
-                    // 获取当前容器坐标
-                    if (containers.length > 0) {
-                        try {
-                            var bFirst = containers[0].bounds();
-                            curFirstTop = bFirst.top;
-                            if (containers.length > 1) {
-                                var bLast = containers[containers.length - 1].bounds();
-                                curLastBottom = bLast.bottom;
-                            }
-                        } catch (e) {}
+                    // 2. 找最后一个小程序文案TextView (id="com.tencent.mm:id/biq")
+                    var currentCaption = null;
+                    if (containers && containers.length > 0) {
+                        var latestContainer = containers[containers.length - 1];
+                        currentCaption = getMiniProgramCaptionFromContainer(latestContainer, curRoot);
                     }
 
-                    // 检测容器内容变化：通过比较容器内的小程序文案
-                    if (containers.length > 0 && lastMiniProgramCaption) {
-                        try {
-                            // 获取当前最新容器的小程序文案
-                            var latestContainer = containers[containers.length - 1];
-                            var currentCaption = getMiniProgramCaptionFromContainer(latestContainer);
-
-                            // 如果文案不同，说明有新消息
-                            if (currentCaption && currentCaption !== lastMiniProgramCaption) {
-                                scrolled = true;
-                                log("[滚动检测] 检测到容器内容变化: 旧文案='" + lastMiniProgramCaption + "' -> 新文案='" + currentCaption + "'");
+                    // 3. 如果小程序文案发生变化，设置scrolled = true（门店检测只做记录）
+                    if (currentCaption && currentCaption !== lastMiniProgramCaption) {
+                        scrolled = true;
+                        log("[检测] 检测到泡泡马特小程序文案变化: 旧文案='" + lastMiniProgramCaption + "' -> 新文案='" + currentCaption + "'");
+                        var allTextViews = curRoot.find(className("android.widget.TextView").algorithm('DFS'));
+                        var hasStoreAddress = false;
+                        if (allTextViews && allTextViews.length > 0) {
+                            var last4TextViews = allTextViews.slice(-4);
+                            for (var i = 0; i < last4TextViews.length; i++) {
+                                var textView = last4TextViews[i];
+                                if (textView && textView.id() === "com.tencent.mm:id/bkl") {
+                                    var storeText = textView.text() || "";
+                                    if (storeText.indexOf("门店") !== -1) {
+                                        hasStoreAddress = true;
+                                        var kw = "门店";
+                                        var pos = storeText.indexOf(kw);
+                                        if (pos !== -1) {
+                                            var monitorShopName = storeText.substring(pos + kw.length).trim();
+                                            // 去掉可能的分隔符号
+                                            monitorShopName = monitorShopName.replace(/^[:：\s]+/, "");
+                                            if (monitorShopName && monitorShopName.length > 0) {
+                                                monitorShopNameMax = monitorShopName;
+                                                log("[群内监听] 找到最高优先级监听商店名称:" + monitorShopName);
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                        } catch (e) {}
-                    }
-                    // 备用检测：坐标变化检测
-                    // if (!scrolled && lastFirstTop !== -1 && curFirstTop !== -1) {
-                    //     var topChanged = Math.abs(curFirstTop - lastFirstTop) >= 5;
-                    //     if (topChanged) {
-                    //         scrolled = true;
-                    //         log("[滚动检测] 检测到顶部位置变化: " + lastFirstTop + " -> " + curFirstTop + " (差值: " + (curFirstTop - lastFirstTop) + ")");
-                    //     }
-                    // }
-
-                    if (!scrolled && lastLastBottom !== -1 && curLastBottom !== -1) {
-                        var bottomChanged = Math.abs(curLastBottom - lastLastBottom) >= 5;
-                        if (bottomChanged) {
-                            scrolled = true;
-                            log("[滚动检测] 检测到底部位置变化: " + lastLastBottom + " -> " + curLastBottom + " (差值: " + (curLastBottom - lastLastBottom) + ")");
+                        }
+                        if (hasStoreAddress) {
+                            log("[检测] 同时检测到门店地址，已记录门店信息");
                         }
                     }
-
-
-                    // 处理新消息（滚动检测到或容器数量变化）
+                    // 处理新消息（小程序文案变化时触发点击）
                     if (scrolled) {
-                        log("scrolled: "+scrolled);
                         sleep(500);
                         var latest = containers[containers.length - 1];
-                        // 群内解析门店关键词，仅扫描 bkj 文案容器
-                        try {
-                            var messageText = "";
-                            try {
-                                var bkjNodes = curRoot.find(id("bkj"));
-                                if (bkjNodes && bkjNodes.length > 0) {
-                                    var latestTop = -1;
-                                    try { latestTop = latest.bounds().top; } catch (e2) {}
 
-                                    // 优先：选择紧贴在最新小程序容器之上的 bkj（bottom < latest.top 且 bottom 最大）
-                                    var chosenIdx = -1;
-                                    var chosenBottom = -1;
-                                    if (latestTop !== -1) {
-                                        for (var bi = 0; bi < bkjNodes.length; bi++) {
-                                            try {
-                                                var node = bkjNodes[bi];
-                                                var bds = node.bounds();
-                                                var bottom = bds.bottom;
-                                                var top = bds.top;
-                                                // 过滤顶部标题与底部输入区域的噪声
-                                                if (top < 120) continue;
-                                                if (bottom > screenHeight - 60) continue;
-                                                if (bottom < latestTop && bottom > chosenBottom) {
-                                                    chosenBottom = bottom;
-                                                    chosenIdx = bi;
-                                                }
-                                            } catch (e3) {}
-                                        }
-                                    }
-
-                                    // 退化：若未找到紧邻上方的 bkj，则取全局最靠底部的 bkj
-                                    if (chosenIdx === -1) {
-                                        for (var bi2 = 0; bi2 < bkjNodes.length; bi2++) {
-                                            try {
-                                                var node2 = bkjNodes[bi2];
-                                                var bds2 = node2.bounds();
-                                                var bottom2 = bds2.bottom;
-                                                var top2 = bds2.top;
-                                                if (top2 < 120) continue;
-                                                if (bottom2 > screenHeight - 60) continue;
-                                                if (bottom2 > chosenBottom) {
-                                                    chosenBottom = bottom2;
-                                                    chosenIdx = bi2;
-                                                }
-                                            } catch (e4) {}
-                                        }
-                                    }
-
-                                    if (chosenIdx !== -1) {
-                                        var targetBKJ = bkjNodes[chosenIdx];
-                                        var tvs = targetBKJ.find(className("android.widget.TextView").algorithm('DFS'));
-                                        var assembled = "";
-                                        for (var ti = 0; ti < tvs.length; ti++) {
-                                            try {
-                                                var tv = tvs[ti];
-                                                var t = tv && tv.text ? tv.text() : "";
-                                                if (t) assembled += t + " ";
-                                            } catch (e5) {}
-                                        }
-                                        if (assembled) {
-                                            messageText = assembled;
-                                        }
-                                    }
-                                }
-                            } catch (e4) {}
-
-                            if (messageText) {
-                                var kw = "门店";
-                                var pos = messageText.indexOf(kw);
-                                if (pos !== -1) {
-                                    var monitorShopName = messageText.substring(pos + kw.length).trim();
-                                    // 去掉可能的分隔符号
-                                    monitorShopName = monitorShopName.replace(/^[:：\s]+/, "");
-                                    if (monitorShopName && monitorShopName.length > 0) {
-                                        monitorShopNameMax = monitorShopName;
-                                        log("[群内监听] 找到最高优先级监听商店名称:" + monitorShopName);
-                                        lastMiniProgramCaption = null;
-                                    }
-                                }
-                            }
-                        } catch (e) {}
                         try {
                             // 检查最新消息是否包含监控内容
                             var containsContent = false;
+                            var text = latest.text() || "";
 
-                            // 必须包含的关键词（AND逻辑）
-                            var requiredKeywords = ["小程序"];
-                            var hasAllRequired = true;
-
-                            for (var i = 0; i < requiredKeywords.length; i++) {
-                                var requiredElement = latest.findOne(className("android.widget.TextView").textContains(requiredKeywords[i]));
-                                if (!requiredElement) {
-                                    hasAllRequired = false;
-                                    break;
-                                }
-                            }
-
-                            if (hasAllRequired) {
-                                // 按"/"分割监控内容（OR逻辑）
-                                var keywords = monitor_content.split("/");
-
+                            // 按"/"分割监控内容（OR逻辑）
+                            var keywords = monitor_content.split("/");
+                            // 如果数组只有"小程序"这一个元素，直接设置containsContent=true
+                            if (keywords.length === 1 && keywords[0].trim() === "小程序") {
+                                containsContent = true;
+                            } else {
+                                // 否则进行关键词匹配
                                 for (var i = 0; i < keywords.length; i++) {
                                     var keyword = keywords[i].trim();
                                     if (keyword) {
-                                        var mini = latest.findOne(className("android.widget.TextView").textContains(keyword));
-                                        if (mini) {
+                                        // 直接检查TextView文本是否匹配关键词
+                                        if (text && isFlexibleMatch(text, keyword)) {
                                             containsContent = true;
                                             break;
                                         }
@@ -2238,62 +2214,46 @@ function startOnNotification () {
                             }
 
                             if (!containsContent) {
-                         //       log("[群内监听] 最新消息不包含监控内容，跳过点击");
+                                log("[群内监听] 最新消息不包含监控内容，跳过点击");
                             } else {
-                                // 获取消息文本内容进行检测
-                                var messageText = "";
-                                try {
-                                    var textViews = latest.find(className("android.widget.TextView"));
-                                    for (var j = 0; j < textViews.length; j++) {
-                                        var tv = textViews[j];
-                                        if (tv && tv.text()) {
-                                            messageText += tv.text() + " ";
-                                        }
-                                    }
-                                } catch (e) {}
-
-                                // // 检测并设置配送方式
-                                // if (messageText) {
-                                //     detectAndSetPurchaseType(messageText);
-                                // }
-
                                 // 检查是否有通知栏处理正在进行中
                                 if (!isProcessingNotification) {
-                                    var newCaption = getMiniProgramCaptionFromContainer(latest);
+                                    var newCaption = getMiniProgramCaptionFromContainer(latest, curRoot);
                                     if (newCaption && lastMiniProgramCaption && newCaption === lastMiniProgramCaption) {
-                                        console.log("[消息监听] 小程序链接没变化，不做点击操作 " );
+                                        console.log("[消息监听] 小程序链接没变化，不做点击操作");
+                                        continue;
                                     } else {
                                         var target = latest.findOne(clickable(true)) || latest;
                                         var bb = target.bounds();
                                         click(bb.centerX(), bb.centerY());
                                         console.info("[消息监听] 已点击小程序消息，等待页面跳转...");
-                                    // 点击后等待页面跳转，避免循环卡死
-                                    sleep(2000);
+                                        // 点击后等待页面跳转，避免循环卡死
+                                        sleep(2000);
 
-                                    // 检查是否已跳转到小程序页面
-                                    if (has_been_started) {
-                                        break;
-                                    }
+                                        // 检查是否已跳转到小程序页面
+                                        if (has_been_started) {
+                                            break;
+                                        }
 
-                                    if (newCaption) {
-                                        lastMiniProgramCaption = newCaption;
-                                    }
+                                        if (newCaption) {
+                                            lastMiniProgramCaption = newCaption;
+                                        }
                                     }
                                 }
                             }
-                        } catch (e) {}
+                        } catch (e) {
+                            log("[门店检测] 点击操作出错: " + e.message);
+                        }
 
                         // 记录最新消息的小程序文案
                         try {
-                            recordLastMiniProgramCaption(containers);
+                            recordLastMiniProgramCaption(containers, curRoot);
                         } catch (e) {
                             log("[群内监听] 记录小程序文案失败: " + e.message);
                         }
                     }
 
-                    // 更新锚点与记录值
-                    lastFirstTop = curFirstTop;
-                    lastLastBottom = curLastBottom;
+
                     groupMsgContainerCount = containers.length;
                     lastContainerCount = containers.length; // 更新全局容器数量记录
 
@@ -2996,27 +2956,6 @@ function findPointsExchangeWebView(current_node) {
     return null;
 }
 
-// 新增：积分兑换页面状态检查函数
-function check_points_exchange_page_tree(header_text, current_webview) {
-   // console.info("check_points_exchange_page_tree");
-
-    if (!current_webview) {
-        return { header: header_text, status: "no_webview" };
-    }
-    if (header_text === "确认订单" || header_text === "访问异常，请稍后重试") {
-        return { header: header_text, status: "confirm_and_pay" };
-    } else if (header_text == "" || header_text === "会员权益") {
-        var exchange_points_btn = current_webview.findOne(text("领取积分").algorithm('DFS'));
-        if (exchange_points_btn) {
-            return { header: header_text, status: "exchange_points" };
-        }
-        return { header: header_text, status: "points_exchange_home" };
-    }
-
-    // 其他所有页面都直接点击积分商品
-    return { header: header_text, status: "default" };
-}
-
 function get_current_webview_fast(current_node) {
     if (!current_node) {
         return null;
@@ -3118,9 +3057,164 @@ function get_current_webview_fast(current_node) {
 
     return null;
 }
+//收藏列表
+function traverseAndPrintAllElements(current_webview) {
+    if (!current_webview) {
+        console.log("No webview provided");
+        return 0;
+    }
+    // 检查是否设置了关键词
+    if (!keyword_text || keyword_text === "") {
+        log("没有设置关键词");
+        return;
+    }
+    // 查找className为android.webkit.WebView的元素
+    var webviewElement = current_webview.findOne(className('android.webkit.WebView'));
+    if (!webviewElement) {
+        var productlist = current_webview.findOne(text("商品列表").algorithm('DFS'));
+        if(productlist){
+            productlist.click();
+            return;
+        }
+        console.log("No android.webkit.WebView element found");
+        return;
+    }
 
+    // 获取WebView元素的子元素数量
+    var childCount = webviewElement.childCount();
+
+    // 先统计所有android.view.View元素
+    var allViews = [];
+    for (var i = 0; i < childCount; i++) {
+        var child = webviewElement.child(i);
+        if (child && child.className() === 'android.view.View') {
+            allViews.push(child);
+        }
+    }
+
+
+    // 遍历第2个到最后一个android.view.View
+    var foundAndClicked = false; // 添加标志变量防止重复执行
+    for (var i = 1; i < allViews.length && !foundAndClicked; i++) {
+        var currentView = allViews[i];
+        // 检查该View下是否有android.view.View子元素
+        var viewChildCount = currentView.childCount();
+        var hasViewChild = false;
+
+        for (var j = 0; j < viewChildCount && !foundAndClicked; j++) {
+            var viewChild = currentView.child(j);
+            if (viewChild && viewChild.className() === 'android.view.View') {
+                var subViewChildCount = viewChild.childCount();
+                for (var k = 0; k < subViewChildCount && !foundAndClicked; k++) {
+                    var subViewChild = viewChild.child(k);
+                    if (subViewChild && subViewChild.className() === 'android.view.View') {
+                        var deepChildCount = subViewChild.childCount();
+                        if (deepChildCount === 1) {
+                            for (var l = 0; l < subViewChildCount && !foundAndClicked; l++) {
+                                var siblingChild = viewChild.child(l);
+                                if (siblingChild && siblingChild.className() === 'android.widget.TextView') {
+                                    var textContent = siblingChild.text();
+                                    if (textContent && keyword_text && isFlexibleMatch(textContent, keyword_text)) {
+                                        siblingChild.click(); // 点击找到的元素
+                                        foundAndClicked = true; // 设置标志变量
+                                        log("点击商品词: " + keyword_text);
+                                        sleep(400);
+                                        return; // 立即退出所有for循环并return
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 如果遍历完所有元素都没有找到关键词，则提示用户
+    if (!foundAndClicked) {
+        log("请添加商品至收藏列表");
+    }
+    return;
+}
+
+
+// 抽盒机页面
+function check_prize_box_page_tree(header_text, current_webview) {
+     console.info("check_prize_box_page_tree");
+
+     if (!current_webview) {
+         return { header: header_text, status: "no_webview" };
+     }
+    if(header_text == "收藏列表"){
+        return{header: header_text, status: "favoriteslist" }
+    }else if (header_text == "" || header_text === "no_header") {
+        var startTime = Date.now();
+        var header_text = current_webview.findOne(text("确认订单").algorithm('DFS'));
+        if (header_text) {
+            return { header: header_text, status: "confirm_and_pay" };
+        }
+        var select_box_pay_button = find_select_box_pay_button(current_webview);
+        if (select_box_pay_button) {
+            return { header: header_text, status: "withdraw" };
+        }
+        var button_parent = find_Prize_box_button_parent(current_webview);
+        if (button_parent && button_parent.text() == "立即购买") {
+            return { header: header_text, status: "purchase" };
+        }
+        if(button_parent && button_parent.text() != "立即购买"){
+            return { header: header_text, status: "purchase_refresh" };
+        }
+        if (Date.now() - startTime > 20) {
+            return { header: header_text, status: "default" };
+        }
+        // 检查是否有"立即购买"按钮
+        var info_page_last_button = find_Prize_box_last_button(current_webview);
+        if(info_page_last_button && info_page_last_button.text() == "立即购买"){
+            return { header: header_text, status: "info_page" };
+        }
+        if(info_page_last_button && info_page_last_button.text() != "立即购买" && !info_page_last_button.text().match(/.*开售.*/)){
+            return { header: header_text, status: "refresh" };
+        }
+        var prepareSaleElement = current_webview.findOne(text("即将开售00:00").algorithm('DFS'));
+        if (prepareSaleElement) {
+            return { header: header_text, status: "prepare_sale" };
+        }
+
+        var select_box_last_button = find_select_box_last_button(current_webview);
+        if (select_box_last_button && (select_box_last_button.text() == "立即选盒" || select_box_last_button.text() == "一次抽多盒")) {
+            return { header: header_text, status: "withdraw_and_pay" };
+        }
+        if (select_box_last_button && (select_box_last_button.text() != "立即选盒" || select_box_last_button.text() != "一次抽多盒")) {
+            return { header: header_text, status: "back" };
+        }
+        return { header: header_text, status: "default" };
+     }
+
+     // 其他所有页面都直接点击积分商品
+     return { header: header_text, status: "default" };
+ }
+// 积分兑换页面
+function check_points_exchange_page_tree(header_text, current_webview) {
+    // console.info("check_points_exchange_page_tree");
+
+     if (!current_webview) {
+         return { header: header_text, status: "no_webview" };
+     }
+     if (header_text === "确认订单" || header_text === "访问异常，请稍后重试") {
+         return { header: header_text, status: "confirm_and_pay" };
+     } else if (header_text == "" || header_text === "会员权益") {
+         var exchange_points_btn = current_webview.findOne(text("领取积分").algorithm('DFS'));
+         if (exchange_points_btn) {
+             return { header: header_text, status: "exchange_points" };
+         }
+         return { header: header_text, status: "points_exchange_home" };
+     }
+
+     // 其他所有页面都直接点击积分商品
+     return { header: header_text, status: "default" };
+ }
+// 小程序页面
 function check_current_page_tree(header_text, current_webview) {
-  //console.info("check_current_page_tree")
+//   console.info("check_current_page_tree")
     if (!current_webview) {
         return { header: header_text, status: "no_webview" };
     }
@@ -3165,114 +3259,36 @@ function check_current_page_tree(header_text, current_webview) {
     }
 }
 
-// 添加下拉刷新功能
-function performPullRefresh(webview) {
-    if (!webview) {
-        console.warn("[错误] WebView为空，无法执行下拉刷新");
-        return false;
-    }
 
-    try {
-        console.info("开始执行下拉刷新");
 
-        // 获取WebView的边界
-        var bounds = webview.bounds();
-        var centerX = bounds.centerX();
-
-        // 确保在WebView内部进行下拉刷新
-        // 从WebView内部上方30%的位置开始，向下拖拽到60%的位置
-        var webviewHeight = bounds.height();
-        var startY = bounds.top + (webviewHeight * 0.2); // 从WebView顶部30%的位置开始
-        var endY = bounds.top + (webviewHeight * 0.8); // 拖拽到WebView 60%的位置
-
-        console.info("下拉刷新坐标 - 起始: (" + centerX + ", " + startY + "), 结束: (" + centerX + ", " + endY + ")");
-
-        // 执行下拉手势
-        swipe(centerX, startY, centerX, endY, 600);
-
-        console.info("下拉刷新手势已执行");
-        sleep(3000); // 等待刷新完成
-
-        return true;
-    } catch (e) {
-        console.error("[错误] 下拉刷新失败: " + e.message);
-        return false;
-    }
-}
-
-// 添加替代的滚动刷新方法
-function performScrollRefresh(webview) {
-    if (!webview) {
-        console.warn("[错误] WebView为空，无法执行滚动刷新");
-        return false;
-    }
-
-    try {
-        console.info("开始执行滚动刷新");
-
-        // 获取WebView的边界
-        var bounds = webview.bounds();
-        var centerX = bounds.centerX();
-        var webviewHeight = bounds.height();
-
-        // 确保在WebView内部进行滚动操作
-        var topPos = bounds.top + (webviewHeight * 0.4); // WebView 40%位置
-        var centerPos = bounds.top + (webviewHeight * 0.5); // WebView 50%位置
-        var bottomPos = bounds.top + (webviewHeight * 0.6); // WebView 60%位置
-
-        console.info("滚动刷新坐标");
-
-        // 执行轻微的上下滚动动作来触发刷新
-        swipe(centerX, centerPos, centerX, topPos, 300);
-        sleep(150);
-        swipe(centerX, topPos, centerX, bottomPos, 400);
-        sleep(300);
-        swipe(centerX, bottomPos, centerX, centerPos, 300);
-
-        console.info("滚动刷新已执行");
-        sleep(600);
-
-        return true;
-    } catch (e) {
-        console.error("[错误] 滚动刷新失败: " + e.message);
-        return false;
-    }
-}
 
 // 添加多种刷新方法的组合
 function performRefreshActions(webview) {
-    console.info("开始执行刷新操作");
+    try {
+        var initialBounds = webview.bounds();
+        var initialCenterX = initialBounds.centerX();
+        var initialCenterY = initialBounds.centerY();
+        var startY = initialCenterY - 200;
+        var endY = initialCenterY + 700;
 
-    var refreshSuccess = false;
-
-    // 方法1: 下拉刷新
-    if (!refreshSuccess) {
-        refreshSuccess = performPullRefresh(webview);
-    }
-
-    // 方法2: 如果下拉刷新失败，尝试滚动刷新
-    if (!refreshSuccess) {
-        refreshSuccess = performScrollRefresh(webview);
-    }
-
-    // 方法3: 如果都失败，尝试点击页面中心进行刷新
-    if (!refreshSuccess) {
-        try {
-            console.info("尝试点击页面中心进行刷新");
-            var bounds = webview.bounds();
-            var centerX = bounds.centerX();
-            var centerY = bounds.top + (bounds.height() * 0.5); // WebView中心位置
-
-            console.info("点击刷新坐标: (" + centerX + ", " + centerY + ")");
-            click(centerX, centerY);
-            sleep(500);
-            refreshSuccess = true;
-        } catch (e) {
-            console.error("[错误] 点击刷新失败: " + e.message);
+        // 使用多点手势实现更流畅的下拉
+        var points = [];
+        var steps = 20; // 增加手势点数
+        for (var i = 0; i <= steps; i++) {
+            var progress = i / steps;
+            var currentY = startY + (endY - startY) * progress;
+            points.push([initialCenterX, currentY]);
         }
-    }
 
-    return refreshSuccess;
+        gesture(800, points); // 增加手势持续时间
+        sleep(1000);
+
+        console.info("[操作] 下拉库存刷新中.....");
+        return true;
+        } catch (e) {
+        console.error("[错误] 下拉刷新执行失败: " + e.message);
+        return false;
+        }
 }
 
 function click_plus_btn(current_webview) {
@@ -3306,7 +3322,7 @@ function click_plus_btn(current_webview) {
 
 function satisfyPurchaseCount(current_webview, target) {
 
-    var number_text = current_webview.findOne(className("android.widget.TextView").text("数量").algorithm('DFS'));
+    var number_text = current_webview.findOne(className("android.widget.TextView").textMatches(".*数量.*").algorithm('DFS'));
     var idx_num_text = number_text.indexInParent()
     var parent_view = number_text.parent()
     var minus_btn = parent_view.child(idx_num_text + 1);
@@ -3778,6 +3794,287 @@ function find_confirm_btn(current_webview) {
     }
     return null;
 }
+function find_Prize_box_last_button(current_webview) {
+    var last_view = null;
+    var childCount = current_webview.childCount();
+    for (var i = childCount - 1; i >= 0; i--) {
+        try {
+            var child = current_webview.child(i);
+        } catch (e) {
+            break;
+        }
+        if (!child) {
+            break;
+        }
+        if (child.className() === "android.view.View") {
+            last_view = child;
+            break;
+        }
+    }
+
+    if (!last_view) {
+        if (debug_mode_conf) {
+            log("Cannot find last view.");
+            log("last_view is null");
+        }
+        return null;
+    }
+
+    if (last_view.childCount() != 1 && last_view.childCount() != 2) {
+        if (debug_mode_conf) {
+            log("last_view error: " + last_view.childCount());
+        }
+        return null;
+    }
+    var last_child = last_view.child(last_view.childCount() - 1);
+    if (!last_child || last_child.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child is null or not android.view.View");
+        }
+        return null;
+    }
+    // make sure it only has one child
+    if (last_child.childCount() != 1) {
+        if (debug_mode_conf) {
+            log("last_child does not have exactly 1 child");
+        }
+        return null;
+    }
+    var last_child_0 = last_child.child(0);
+    if (!last_child_0 || last_child_0.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0 is null or not android.view.View");
+        }
+        return null;
+    }
+    // make sure it only has one child
+    if (last_child_0.childCount() != 1) {
+        if (debug_mode_conf) {
+            log("last_child_0 does not have exactly 1 child");
+        }
+        return null;
+    }
+    var last_child_0_0 = last_child_0.child(0);
+    if (!last_child_0_0 || last_child_0_0.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0_0 is null or not android.view.View");
+        }
+        return null;
+    }
+
+    var last_child_last_child = last_child_0_0.child(last_child_0_0 .childCount() - 1);
+    if (!last_child_last_child || last_child_last_child.className() !== "android.widget.Button") {
+        if (debug_mode_conf) {
+            log("last_child_last_child is null or not android.widget.TextView");
+        }
+        return null;
+    }
+
+    return last_child_last_child;
+}
+function find_Prize_box_button_parent(current_webview) {
+    var last_view = null;
+    var childCount = current_webview.childCount();
+    for (var i = childCount - 1; i >= 0; i--) {
+        try {
+            var child = current_webview.child(i);
+        } catch (e) {
+            break;
+        }
+        if (!child) {
+            break;
+        }
+        if (child.className() === "android.view.View") {
+            last_view = child;
+            break;
+        }
+    }
+
+    if (!last_view) {
+        if (debug_mode_conf) {
+            log("Cannot find last view.");
+            log("last_view is null");
+        }
+        sleep(30);
+        return null;
+    }
+    if (last_view.childCount() != 1 && last_view.childCount() != 2) {
+        if (debug_mode_conf) {
+            log("last_view error: " + last_view.childCount());
+        }
+        return null;
+    }
+    var last_child = last_view.child(last_view.childCount() - 1);
+    if (!last_child || last_child.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child is null or not android.view.View");
+        }
+        return null;
+    }
+    if (last_child.childCount() != 1) {
+        if (debug_mode_conf) {
+        log("last_child does not have exactly 1 child");
+        }
+        return null;
+    }
+    var last_child_0 = last_child.child(0);
+    if (!last_child_0 || last_child_0.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0 is null or not android.view.View");
+        }
+        return null;
+    }
+    // make sure it only has one child
+    if (last_child_0.childCount() != 2) {
+        if (debug_mode_conf) {
+            log("last_child_0 does not have exactly 1 child");
+        }
+        return null;
+    }
+    var last_child_0_0 = last_child_0.child(0);
+    if (!last_child_0_0 || last_child_0_0.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0_0 is null or not android.view.View");
+        }
+        return null;
+    }
+    if (last_child_0_0.childCount() != 3) {
+        if (debug_mode_conf) {
+            log("last_child_0_0 does not have exactly 1 child");
+        }
+        return null;
+    }
+    var last_child_0_0_2 = last_child_0_0.child(2);
+    if (!last_child_0_0_2 || last_child_0_0_2.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0_0_2 is null or not android.view.View");
+        }
+        return null;
+    }
+
+        var last_child_0_0_0_2 = last_child_0_0_2.child(0);
+        if (!last_child_0_0_0_2 || last_child_0_0_0_2.className() !== "android.widget.Button") {
+            if (debug_mode_conf) {
+                log("last_child_0_0_0_2 is null or not android.widget.Button");
+            }
+            return null;
+        }
+        return last_child_0_0_0_2;
+    }
+
+function find_select_box_pay_button(current_webview) {
+    var last_view = null;
+    var childCount = current_webview.childCount();
+    var viewCount = 0;
+    for (var i = childCount - 1; i >= 0; i--) {
+        try {
+            var child = current_webview.child(i);
+        } catch (e) {
+            break;
+        }
+        if (!child) {
+            break;
+        }
+        if (child.className() === "android.view.View") {
+            viewCount++;
+            if (viewCount === 1) { // 找到倒数第二个
+                last_view = child;
+                break;
+            }
+        }
+    }
+
+    if (!last_view) {
+        if (debug_mode_conf) {
+            log("Cannot find last view.");
+            log("last_view is null");
+        }
+        return null;
+    }
+
+    if (last_view.childCount() < 2) {
+        if (debug_mode_conf) {
+            log("last_view has less than 2 children");
+        }
+        return null;
+    }
+
+    var last_child = last_view.child(last_view.childCount() - 1);
+    if (!last_child || last_child.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child is null or not android.view.View");
+        }
+        return null;
+    }
+    // make the last_child its last child
+    var last_child_0 = last_child.child(last_child.childCount() - 1);
+    if (!last_child_0 || last_child_0.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0 is null or not android.view.View");
+        }
+        return null;
+    }
+    var last_child_0_0 = last_child_0.child(last_child_0.childCount() - 1);
+    if (!last_child_0_0 || last_child_0_0.className() !== "android.view.View") {
+        if (debug_mode_conf) {
+            log("last_child_0_0 is null or not android.view.View");
+        }
+        return null;
+    }
+
+    var last_child_0_0_0 = last_child_0_0.child(last_child_0_0.childCount() - 1);
+    if (!last_child_0_0_0 || last_child_0_0_0.className() !== "android.widget.Button") {
+        if (debug_mode_conf) {
+            log("last_child_0_0_0 is null or not android.widget.Button");
+        }
+        return null;
+    }
+    return last_child_0_0_0;
+}
+
+function find_select_box_last_button(current_webview) {
+    var last_view = null;
+    var childCount = current_webview.childCount();
+    for (var i = childCount - 2; i >= 0; i--) {
+        try {
+            var child = current_webview.child(i);
+        } catch (e) {
+            break;
+        }
+        if (!child) {
+            break;
+        }
+        if (child.className() === "android.view.View") {
+            last_view = child;
+            break;
+        }
+    }
+
+    if (!last_view) {
+        if (debug_mode_conf) {
+            log("Cannot find last view.");
+            log("last_view is null");
+        }
+        sleep(30);
+        return null;
+    }
+
+    if (last_view.childCount() != 2 && last_view.childCount() != 3) {
+        if (debug_mode_conf) {
+            log("last_view error: " + last_view.childCount());
+        }
+        return null;
+    }
+
+    var first_child = last_view.child(0); // get first child of last_view
+    if (!first_child || first_child.className() !== "android.widget.TextView") {
+        if (debug_mode_conf) {
+            log("last_child is null or not android.widget.TextView");
+        }
+        return null;
+    }
+    return first_child;
+}
 
 function is_empty_stock(current_webview) {
     var last_child_0_0_2 = find_button_parent(current_webview);
@@ -3803,7 +4100,9 @@ var submit_flag = false;
 var confirm_btn_retry_count = 0;
 var ignore_next_purchase_page_flag = false;
 var has_entered_confirm_and_pay = false; // 标记是否进入过confirm_and_pay状态
-
+var confirmInfoClicked = false; // 跟踪确认信息并支付按钮点击状态
+var doubleConfirmClicked = false; // 跟踪确认无误/就是这家按钮点击状态
+var confirmBtnEnterCount = 0; //回流计数器
 
 var dc_streak = 0;
 var payment_page_confirm_btn_retry_count = 0;
@@ -3823,29 +4122,36 @@ function safeClickByText(_0x222437,_0x407a0d){
     return false;
 }
 
-// 支付流程函数 (参考 JS_hongzhong.js 的 _0x5eefae 函数)
 function startPaymentProcess() {
 
             // 1. 优先使用坐标点击 "确认信息并支付" 按钮（极速模式）
             if (calibration_status.confirm_info) {
                 clickByCoordinates('confirm_info');
-                  console.error("[点击] 确认信息并支付1");
+                console.error("[点击] 确认信息并支付1");
+                confirmInfoClicked = true;
+                doubleConfirmClicked = false;
                 sleep(ignore_ack_click_delay);
 
             }
             // 根据购买类型选择不同的确认按钮
             if (purchase_type === '送到家') {
-                clickByCoordinates('double_confirm');
-                console.info("[点击] 确认无误1");
+                if (calibration_status.double_confirm) {
+                    clickByCoordinates('double_confirm');
+                    doubleConfirmClicked = true;
+                    confirmInfoClicked = false;
+                    console.info("[点击] 确认无误1");
+                }
             } else if (purchase_type === '到店取') {
-                clickByCoordinates('double_exactly');
-                console.info("[点击] 就是这家1");
+                if (calibration_status.double_exactly) {
+                    clickByCoordinates('double_exactly');
+                    doubleConfirmClicked = true;
+                    confirmInfoClicked = false;
+                    console.info("[点击] 就是这家1");
+                }
             }
             //sleep(ignore_ack_click_confirm_delay + 100);
 
-            // 添加点击状态跟踪，确保顺序点击
-            var confirmInfoClicked = false;
-            var doubleConfirmClicked = false;
+
             // 标记是否进入了while循环
             // 添加重试计数器
             var confirmInfoRetryCount = 0;
@@ -3859,11 +4165,24 @@ function startPaymentProcess() {
                     dc_streak = 0;
                     confirmButtonExecuted = false; // 重置确认按钮执行标志
                     purchasee_pagee_count = 0;
+                    confirmBtnEnterCount = 0;
+                    confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                    doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
                     break;
                 }
                 // 使用findOne()替代exists()，提高识别速度
+            if(!confirmInfoClicked){
                 var confirmInfoBtn = className('android.widget.TextView').text('确认信息并支付').findOne(20);
-                if(confirmInfoBtn && !confirmInfoClicked){
+                if(confirmInfoBtn){
+                    if (!calibration_status.confirm_info) {
+                        var bounds = confirmInfoBtn.bounds();
+                        var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                        cached_confirm_info_coords = coords;
+                        calibration_status.confirm_info = true;
+                        updatePrecomputedCoords();
+                        saveCoordinatesToStorage();
+                        console.info("[记录坐标] 确认信息并支付按钮坐标已记录并保存到本地");
+                    }
                     safeClickByText(className('android.widget.TextView'),'确认信息并支付');
                     console.error("[点击] 确认信息并支付2");
                     confirmInfoClicked = true;
@@ -3883,10 +4202,10 @@ function startPaymentProcess() {
                         break;
                     }
                 }
+            }
 
                 var currentConfirmOrder = className('android.widget.TextView').text('确认订单').findOne(50);
                 if (!currentConfirmOrder) {
-                  //  console.info("[页面变化] 检测到确认订单页面已消失，退出循环");
                     break;
                 }
                 sleep(50);
@@ -3895,6 +4214,15 @@ function startPaymentProcess() {
                     if(purchase_type === '到店取') {
                         var homeBtn = className('android.widget.TextView').text('就是这家').findOne(200);
                         if(homeBtn) {
+                            if (!calibration_status.double_exactly) {
+                                var bounds = homeBtn.bounds();
+                                var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                                cached_double_exactly_coords = coords;
+                                calibration_status.double_exactly = true;
+                                updatePrecomputedCoords();
+                                saveCoordinatesToStorage();
+                                console.info("[记录坐标] 就是这家按钮坐标已记录并保存到本地");
+                            }
                             //console.info('二次确认：点击\'就是这家\'按钮');
                             safeClickByText(className('android.widget.TextView'),'就是这家');
                             console.info("[点击] 就是这家2");
@@ -3918,6 +4246,15 @@ function startPaymentProcess() {
                     } else if(purchase_type === '送到家') {
                         var confirmBtn = className('android.widget.TextView').text('确认无误').findOne(200);
                         if(confirmBtn) {
+                            if (!calibration_status.double_confirm) {
+                                var bounds = confirmBtn.bounds();
+                                var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                                cached_double_confirm_coords = coords;
+                                calibration_status.double_confirm = true;
+                                updatePrecomputedCoords();
+                                saveCoordinatesToStorage();
+                                console.info("[记录坐标] 确认无误按钮坐标已记录并保存到本地");
+                            }
                             //console.info('二次确认：点击\'确认无误\'按钮');
                             safeClickByText(className('android.widget.TextView'),'确认无误');
                             console.info("[点击] 确认无误2");
@@ -3957,15 +4294,28 @@ function startPaymentProcess() {
                         dc_streak = 0;
                         confirmButtonExecuted = false; // 重置确认按钮执行标志
                         purchasee_pagee_count = 0;
+                        confirmBtnEnterCount = 0;
+                        confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                        doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
                         break;
                     }
+                if(!confirmInfoClicked){
                     var confirmInfoBtn = className('android.widget.TextView').text('确认信息并支付').findOne(200);
-                    if(confirmInfoBtn && !confirmInfoClicked){
+                    if(confirmInfoBtn){
                         safeClickByText(className('android.widget.TextView'),'确认信息并支付');
+                        if (!calibration_status.confirm_info) {
+                            var bounds = confirmInfoBtn.bounds();
+                            var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                            cached_confirm_info_coords = coords;
+                            calibration_status.confirm_info = true;
+                            updatePrecomputedCoords();
+                            saveCoordinatesToStorage();
+                            console.info("[记录坐标] 确认信息并支付按钮坐标已记录并保存到本地");
+                        }
                         console.error("[点击] 确认信息并支付2");
                         confirmInfoClicked = true;
                         doubleConfirmClicked = false;
-                        sleep(ignore_ack_click_delay-100);
+                        sleep(ignore_ack_click_delay - 100);
                     } else {
                         if(confirmInfoRetryCount < 2){
                             confirmInfoRetryCount++;
@@ -3981,6 +4331,7 @@ function startPaymentProcess() {
                             break;
                         }
                     }
+                }
                     var currentConfirmOrder = className('android.widget.TextView').text('确认订单').findOne(100);
                     if (!currentConfirmOrder) {
                       //  console.info("[页面变化] 检测到确认订单页面已消失，退出循环");
@@ -3991,12 +4342,20 @@ function startPaymentProcess() {
                         if(purchase_type === '到店取') {
                             var homeBtn = className('android.widget.TextView').text('就是这家').findOne(200);
                             if(homeBtn) {
-                                //console.info('二次确认：点击\'就是这家\'按钮');
+                                if (!calibration_status.double_exactly) {
+                                    var bounds = homeBtn.bounds();
+                                    var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                                    cached_double_exactly_coords = coords;
+                                    calibration_status.double_exactly = true;
+                                    updatePrecomputedCoords();
+                                    saveCoordinatesToStorage();
+                                    console.info("[记录坐标] 就是这家按钮坐标已记录并保存到本地");
+                                }
                                 safeClickByText(className('android.widget.TextView'),'就是这家');
                                 console.info("[点击] 就是这家2");
                                 doubleConfirmClicked = true;
                                 confirmInfoClicked = false;
-                                sleep(ignore_ack_click_confirm_delay-50);
+                                sleep(ignore_ack_click_confirm_delay - 50);
                             } else {
                                 //console.info('二次确认：未找到\'就是这家\'按钮');
                                 if(doubleConfirmRetryCount < 2){
@@ -4013,12 +4372,20 @@ function startPaymentProcess() {
                         } else if(purchase_type === '送到家') {
                             var confirmBtn = className('android.widget.TextView').text('确认无误').findOne(200);
                             if(confirmBtn) {
-                                //console.info('二次确认：点击\'确认无误\'按钮');
+                                if (!calibration_status.double_confirm) {
+                                    var bounds = confirmBtn.bounds();
+                                    var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                                    cached_double_confirm_coords = coords;
+                                    calibration_status.double_confirm = true;
+                                    saveCoordinatesToStorage();
+                                    updatePrecomputedCoords();
+                                    console.info("[记录坐标] 确认无误按钮坐标已记录并保存到本地");
+                                }
                                 safeClickByText(className('android.widget.TextView'),'确认无误');
                                 console.info("[点击] 确认无误2");
                                 doubleConfirmClicked = true;
                                 confirmInfoClicked = false;
-                                sleep(ignore_ack_click_confirm_delay-50);
+                                sleep(ignore_ack_click_confirm_delay - 50);
                             } else {
                                 //console.info('二次确认：未找到\'确认无误\'按钮');
                                 if(doubleConfirmRetryCount < 2){
@@ -4112,7 +4479,6 @@ while (true) {
         }
     }
 
-
     if (script_status == 0) {
         // Reset ALL state variables to ensure clean restart
         rebuy_flag = false;
@@ -4124,22 +4490,18 @@ while (true) {
         confirm_btn_retry_count = 0;
         payment_page_confirm_btn_retry_count = 0;
         tried_clicked_confirm_to_pay_page_count = 0;
+        confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+        doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
         submited_refresh_flag = false;
         submited_refresh_count = 0;
         purchasee_pagee_count = 0;
+        confirmBtnEnterCount = 0;
         confirm_positioning_value = null;
         textViewInfoAdded = false; // 重置TextView信息添加标记
         shouldBreak = false; // 重置跳出标志
 
         // 使用更长的延迟，减少CPU占用
         sleep(100);
-        continue;
-    }
-    // 检查是否为兑换模式，如果是则使用独立的逻辑
-    if (pattern_choice === '兑换模式') {
-        // 兑换模式独立逻辑
-        has_been_started = true;
-        handleExchangeMode();
         continue;
     }
 
@@ -4182,15 +4544,277 @@ while (true) {
         }
     }
     // console.timeEnd("get_webview_parent_node");
-
     // console.time("get_current_node");
     var current_node = get_current_node(webview_parent_node);
     if (!current_node) {
         has_been_started = false;
+         if (debug_mode_conf) {
+            log("Cannot find current node.");
+         }
+        continue;
+    }
+
+        // 检查模式选择，使用独立的逻辑
+        if(pattern_choice === '抢购模式'){
+            handFlashSaleMode();
+            continue;
+        }
+        else if (pattern_choice === '兑换模式') {
+            // 兑换模式独立逻辑
+            has_been_started = true;
+            handleExchangeMode();
+            continue;
+        }
+        else if (pattern_choice === '盒机模式') {
+            // 盒机模式独立逻辑
+            has_been_started = true;
+            handprizeBoxMode();
+            continue;
+        }
+}
+// 处理点击积分商品
+function handleClickPoints(webview, node) {
+    // 首先查找"立即兑换"按钮
+    var exchangeBtn = className('android.widget.TextView').text('立即兑换').findOne(10);
+    if (exchangeBtn) {
+        console.info("[积分兑换] 找到立即兑换按钮，直接点击");
+        exchangeBtn.click();
+        sleep(150);
+        handlePointsExchangeButtons();
+        return;
+    }
+
+    // 如果找不到"立即兑换"按钮，执行原有的积分商品查找逻辑
+    var pointsText = exchange_points.toString();
+    var pointsElement = webview.findOne(className("android.widget.TextView").text(pointsText).algorithm('DFS'));
+    if (pointsElement) {
+        pointsElement.click();
+        console.info("[积分兑换] 点击商品，积分: " + pointsText);
+      //  sleep(special_confirm_delay+200);
+        // 点击积分商品后，直接处理页面上的按钮
+        handlePointsExchangeButtons();
+    } else {
+        console.warn("[积分兑换] 未找到对应 "+ pointsText + "积分商品");
+        // 在积分兑换模式下，直接使用传入的webview重新查找，避免结构不匹配问题
+        try {
+            // 重新查找积分商品
+            var retryPointsElement = webview.findOne(className("android.widget.TextView").text(pointsText).algorithm('DFS'));
+            if (retryPointsElement) {
+                retryPointsElement.click();
+                console.info("[积分兑换] 重新查找后找到积分商品，点击成功: " + pointsText);
+                handlePointsExchangeButtons();
+            } else {
+                console.error("[积分兑换] 重新查找后仍未找到积分商品(" + pointsText + ")");
+            }
+        } catch (e) {
+            console.error("[积分兑换] 重新查找积分商品时发生错误: " + e.message);
+        }
+    }
+}
+
+// 处理积分兑换按钮的统一函数
+function handlePointsExchangeButtons() {
+
+    // 快速检查"立即兑换"按钮（减少等待时间）
+
+    var confirm_btn =  className('android.widget.TextView').text('立即兑换').findOne(10);
+            if (!confirm_btn) {
+                // 检查是否有"立即购买"按钮
+                var arrivalNoticeBtn = className('android.widget.TextView').text('到货通知').findOne(50);
+                if (arrivalNoticeBtn) {
+                    var bounds = arrivalNoticeBtn.bounds();
+                    press(bounds.centerX(), bounds.centerY(), 50);
+                    console.info("[积分兑换] 点击到货通知");
+                    back();
+                    return;
+                }
+                back();
+                return;
+            }else{
+                var bounds = confirm_btn.bounds();
+                press(bounds.centerX(), bounds.centerY(), 50);
+                console.info("[积分兑换] 点击立即兑换");
+                sleep(150);
+                if(purchase_count > 1){
+                    // 在积分兑换页面中查找数量控件并调整数量
+                    var purchase_count_text = className('android.widget.TextView').text('数量').findOne(100);
+                    if (purchase_count_text) {
+                        var idx_num_text = purchase_count_text.indexInParent();
+                        var parent_view = purchase_count_text.parent();
+                        if (parent_view) {
+                            sleep(100);
+                            var minus_btn = parent_view.child(idx_num_text + 1);
+                            var number_count_text = parent_view.child(idx_num_text + 2);
+                            var plus_btn = parent_view.child(idx_num_text + 3);
+
+                            if (minus_btn && number_count_text && plus_btn) {
+                                var current = parseInt(number_count_text.text());
+                                if (!isNaN(current) && current !== purchase_count) {
+                                    if (current > purchase_count) {
+                                        var diff = current - purchase_count;
+                                        for (var i = 0; i < diff; i++) {
+                                            minus_btn.click();
+                                            sleep(10);
+                                        }
+                                    } else {
+                                        var diff = purchase_count - current;
+                                        for (var i = 0; i < diff; i++) {
+                                            plus_btn.click();
+                                            sleep(10);
+                                        }
+                                    }
+                                    log("已满足购买数量要求: ", purchase_count);
+                                }
+                            }
+                        }
+                    }
+                }
+                var confirmBtn = className('android.widget.Button').text('确定').findOne(500);
+                if (confirmBtn) {
+                    confirmBtn.click();
+                    console.info("[积分兑换] 点击确定按钮");
+                    sleep(250);
+                    return;
+                }
+            }
+
+}
+
+// 处理确认订单页面
+function handleConfirmOrder() {
+    if (calibration_status.confirm_info) {
+        clickByCoordinates('confirm_info');
+          console.error("[点击] 确认信息并支付1");
+        sleep(ignore_ack_click_delay);
+    }
+    // 根据购买类型选择不同的确认按钮
+    if (calibration_status.double_confirm) {
+        clickByCoordinates('double_confirm');
+        console.info("[点击] 确认无误1");
+    }
+    //sleep(ignore_ack_click_confirm_delay + 100);
+
+    // 添加点击状态跟踪，确保顺序点击
+
+    // 标记是否进入了while循环
+    // 添加重试计数器
+    var confirmInfoRetryCount = 0;
+    var doubleConfirmRetryCount = 0;
+    sleep(ignore_ack_click_confirm_delay -50);
+    while (className('android.widget.TextView').text('确认订单').exists() == true) {
+        if (script_status == 0) {
+            rebuy_flag = false;
+            submit_flag = false;
+            dc_streak = 0;
+            confirmButtonExecuted = false; // 重置确认按钮执行标志
+            purchasee_pagee_count = 0;
+            confirmBtnEnterCount = 0;
+            confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+            doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
+            break;
+        }
+        var confirmInfoBtn = className('android.widget.TextView').text('确认信息并支付').findOne(200);
+        if(confirmInfoBtn && !confirmInfoClicked){
+            safeClickByText(className('android.widget.TextView'),'确认信息并支付');
+            console.error("[点击] 确认信息并支付2");
+            confirmInfoClicked = true;
+            doubleConfirmClicked = false;
+            sleep(ignore_ack_click_delay-100);
+        } else {
+            if(confirmInfoRetryCount < 2){
+                confirmInfoRetryCount++;
+           //   log("确认信息并支付:"+confirmInfoRetryCount);
+                sleep(100);
+                continue;
+            } else {
+                if(className('android.widget.TextView').text('我知道了').exists()==true){
+                    safeClickByText(className('android.widget.TextView'),'我知道了');
+                    }else{
+                        back();
+                    }
+                break;
+            }
+        }
+        var currentConfirmOrder = className('android.widget.TextView').text('确认订单').findOne(100);
+        if (!currentConfirmOrder) {
+          //  console.info("[页面变化] 检测到确认订单页面已消失，退出循环");
+            break;
+        }
+        sleep(100);
+         if(confirmInfoClicked && !doubleConfirmClicked) {
+
+                var confirmBtn = className('android.widget.TextView').text('确认无误').findOne(200);
+                if(confirmBtn) {
+                    //console.info('二次确认：点击\'确认无误\'按钮');
+                    safeClickByText(className('android.widget.TextView'),'确认无误');
+                    console.info("[点击] 确认无误2");
+                    doubleConfirmClicked = true;
+                    confirmInfoClicked = false;
+                    sleep(ignore_ack_click_confirm_delay-50);
+                } else {
+                    //console.info('二次确认：未找到\'确认无误\'按钮');
+                    if(doubleConfirmRetryCount < 2){
+                        doubleConfirmRetryCount++;
+
+                        continue;
+                    } else {
+                        if(className('android.widget.TextView').text('我知道了').exists()==true){
+                            safeClickByText(className('android.widget.TextView'),'我知道了');
+                            }
+                        break;
+                    }
+                }
+            }
+        // 检查页面是否真的发生了变化
+
+        var currentConfirmOrder = className('android.widget.TextView').text('确认订单').findOne(200);
+        if (!currentConfirmOrder) {
+         //   console.info("[页面变化] 检测到确认订单页面已消失，退出循环");
+            break;
+        }
+        sleep(200);
+    }
+    if (className('android.widget.TextView').text('支付成功').exists()) {
+        setVitaData(); //上传数据
+    }
+    sleep(50);
+    }
+
+// 处理积分不足情况
+function handleInsufficientPoints(webview) {
+    console.error("[积分兑换] 检测到积分不足，停止脚本");
+
+    // 停止脚本
+    script_status = 0;
+    confirmBtnEnterCount = 0; // 重置回流计数器
+    ui.post(() => {
+        w.end.attr('visibility', 'gone');
+        w.start.attr('visibility', 'visible');
+    });
+
+    // 显示提示
+    toast("积分不足，脚本已停止");
+    console.warn("[积分兑换] 脚本已停止，请检查积分余额");
+}
+
+// 抢购模式
+function handFlashSaleMode() {
+       // console.timeEnd("get_current_node");
+    // console.time("get_header_text");
+    var webview_parent_node = get_webview_parent_node();
+    if (!webview_parent_node) {
+        if (debug_mode_conf) {
+         log("Cannot find webview parent node.");
+        }
+        return;
+    }
+    // console.time("get_current_node");
+    var current_node = get_current_node(webview_parent_node);
+    if (!current_node) {
         if (debug_mode_conf) {
             log("Cannot find current node.");
         }
-        continue;
+        return;
     }
     // console.timeEnd("get_current_node");
 
@@ -4202,14 +4826,16 @@ while (true) {
     var current_webview = get_current_webview_fast(current_node);
     if (!current_webview) {
         if (!groupMessageListenerStarted && script_start_immediately_conf) {
-         // log("checkIfInWeChatGroup");
             checkIfInWeChatGroup();
         }
         has_been_started = false;
+        // if (currentPackage() == "com.tencent.mm" && !isProcessingNotification) {
+        //     groupMessageListenerStarted = false;
+        // }
         if (debug_mode_conf) {
             log("Cannot find current webview.");
         }
-        continue;
+        return;
     }
     // console.timeEnd("get_current_webview");
 
@@ -4283,6 +4909,7 @@ while (true) {
                             if (refresh_attempt_count >= max_refresh_attempts) {
                                 console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
                                 script_status = 0;
+                                confirmBtnEnterCount = 0; // 重置回流计数器
                                 ui.post(() => {
                                     w.end.attr('visibility', 'gone');
                                     w.start.attr('visibility', 'visible');
@@ -4391,6 +5018,7 @@ while (true) {
         if (refresh_attempt_count >= max_refresh_attempts) {
             console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
             script_status = 0;
+            confirmBtnEnterCount = 0; // 重置回流计数器
             ui.post(() => {
                 w.end.attr('visibility', 'gone');
                 w.start.attr('visibility', 'visible');
@@ -4853,7 +5481,22 @@ while (true) {
             }
             sleep(200);
             if(purchase_type == "到店取"){
-            var store_btn = className('android.widget.TextView').text('选择门店').findOne(20);
+                // 检查通知文本或小程序文案是否包含【】字符，如果包含则跳过门店选择
+                var shouldSkipStoreSelection = false;
+                var skipReason = "";
+                if (globalNotificationText && globalNotificationText.includes('【') && globalNotificationText.includes('】')) {
+                    shouldSkipStoreSelection = true;
+                    skipReason = "通知文本包含【】字符";
+                } else if (skipStoreSelection) {
+                    shouldSkipStoreSelection = true;
+                    skipReason = "小程序文案包含【】字符";
+                }
+
+                if (shouldSkipStoreSelection) {
+                    console.info("[操作] 检测到" + skipReason + "，跳过门店选择");
+                    skipStoreSelection = false;
+                } else {
+                    var store_btn = className('android.widget.TextView').text('选择门店').findOne(20);
             if (store_btn) {
                 store_btn.click();
                 console.info("[操作] 点击选择门店");
@@ -4886,6 +5529,7 @@ while (true) {
                             }
                                 if (!monitoringShopRaw) {
                                     console.info("[操作] 未设置门店名，跳过门店选择");
+                                    shouldBreak = false;
                                 } else {
                                         var shopNames = monitoringShopRaw.split('/').map(name => name.trim());
                                             for (var k = 0; k < targetTextView.length; k++) {
@@ -4932,6 +5576,7 @@ while (true) {
                     break;
                 }
             }
+                } // 闭合else语句，对应跳过门店选择的else分支
         }
             // 立即开始库存刷新，零延迟启动
             selectionEndTime = new Date().getTime();
@@ -4944,7 +5589,12 @@ while (true) {
             }
         }
         var refreshTimeStart = new Date();
-        var current_selection = purchase_type;
+        var current_selection = null;
+        var random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
+        if (enable_random_delay_conf) {
+            random_delay = 0;
+        }
+        var sleepTarget = refresh_delay + random_delay;
 
             // 立即开始查找确定按钮，零延迟
             var confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
@@ -4956,6 +5606,7 @@ while (true) {
                     if ((currentTime - refreshTimeStart) > 1000 * 60 * max_refresh_time) {
                         if (timeout_sleep_wait_time == 0) {
                             script_status = 0;
+                            confirmBtnEnterCount = 0; // 重置回流计数器
                             ui.post(() => {
                                 w.end.attr('visibility', 'gone');
                                 w.start.attr('visibility', 'visible');
@@ -4977,9 +5628,11 @@ while (true) {
                     dc_streak = 0;
                     confirmButtonExecuted = false; // 重置确认按钮执行标志
                     purchasee_pagee_count = 0;
+                    confirmBtnEnterCount = 0;
+                    confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                    doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
                     break;
                 }
-                var should_skip_delay = false;
                 var check_start_time = new Date().getTime();
                 var purchase_btn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
 
@@ -4987,12 +5640,10 @@ while (true) {
                 if (purchase_btn) {
                     confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
                     if (confirm_btn) {
-                        confirm_btn.click();
-                        sleep(special_confirm_delay - 100);
                         break;
                     }
                     // safe stock check logic
-                    if (!should_skip_delay && refresh_mode == "切换刷" && current_selection != purchase_type) {
+                    if (refresh_mode == "切换刷") {
                         var sold_out = updated_webview.findOne(text("已售罄").algorithm('DFS'));
                         var refresh_retry = 0;
                         var timeout_flag = false;
@@ -5010,16 +5661,17 @@ while (true) {
                             sleep(fast_mode_check_interval); // 使用快速模式检查间隔
                             confirm_btn = className('android.widget.TextView').text('确定').findOne(20);
                             if (confirm_btn) {
-                                confirm_btn.click();
-                                sleep(special_confirm_delay - 100);
                                 break;
                             }
                             if (script_status == 0) {
                                 rebuy_flag = false;
                                 submit_flag = false;
                                 dc_streak = 0;
+                                confirmBtnEnterCount = 0;
                                 confirmButtonExecuted = false; // 重置确认按钮执行标志
                                 purchasee_pagee_count = 0;
+                                confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                                doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
                                 break;
                             }
                         }
@@ -5034,23 +5686,38 @@ while (true) {
                                 purchase_btn.click();
                             }
                         } else if(refresh_mode == "切换刷"){
-                            var current_selection_btn = updated_webview.findOne(text(current_selection).algorithm('DFS'));
-                            if (current_selection_btn) {
-                                current_selection_btn.click();
-                                log("[点击]" + current_selection);
-                                if (current_selection_btn && current_selection != purchase_type) {
-                                    should_skip_delay = true;
-                                    //console.info("[切换刷] 当前选择(" + current_selection + ")与目标类型(" + purchase_type + ")不同，跳过刷新延迟");
-                                }
-                                if (current_selection == '到店取') {
-                                    current_selection = '送到家';
-                                } else {
+                            if (purchase_type == '到店取') {
+                                current_selection = '送到家';
+                                var target_btn = updated_webview.findOne(text(current_selection).algorithm('DFS'));
+                                if (target_btn) {
+                                    target_btn.click();
+                                    log("[点击]" + current_selection);
+                                    sleep(300);
                                     current_selection = '到店取';
+                                    target_btn = updated_webview.findOne(text(current_selection).algorithm('DFS'));
+                                    if (target_btn) {
+                                        target_btn.click();
+                                        log("[点击]" + current_selection);
+                                        console.info("[注意] 库存刷新耗时: ", sleepTarget, "ms");
+                                        sleep(sleepTarget);
+                                    }
                                 }
-                                if(current_selection == purchase_type){
-                                    sleep(240);
+                            } else {
+                                current_selection = '到店取';
+                                var target_btn = updated_webview.findOne(text(current_selection).algorithm('DFS'));
+                                if (target_btn) {
+                                    target_btn.click();
+                                    log("[点击]" + current_selection);
+                                    sleep(300);
+                                    current_selection = '送到家';
+                                    target_btn = updated_webview.findOne(text(current_selection).algorithm('DFS'));
+                                    if (target_btn) {
+                                        target_btn.click();
+                                        log("[点击]" + current_selection);
+                                        console.info("[注意] 库存刷新耗时: ", sleepTarget, "ms");
+                                        sleep(sleepTarget);
+                                    }
                                 }
-
                             }
                         }else if(refresh_mode == "页面刷"){
                             rebuy_flag = true;
@@ -5072,34 +5739,20 @@ while (true) {
                     }
 
                 }
-                if (!should_skip_delay) {
                 confirm_btn = updated_webview.findOne(text("确定").algorithm('DFS'));
                 if (confirm_btn) {
-                    confirm_btn.click();
-                    sleep(special_confirm_delay - 100);
                     break;
                 }
-                // 优化刷新延迟计算
-                var random_delay = Math.floor(Math.random() * (random_refresh_delay_upper - random_refresh_delay_lower + 1)) + random_refresh_delay_lower;
-                if (enable_random_delay_conf) {
-                    random_delay = 0;
-                }
-
-                var sleepTarget = refresh_delay + random_delay;
-                if(!should_skip_delay && refresh_mode == "切换刷"){
-                    sleep(sleepTarget + 400);
-                    console.info("[注意] 库存刷新耗时: ", sleepTarget + 450, "ms");
-                }else if(refresh_mode == "智能刷"){
-                    sleep(sleepTarget);
+                if(refresh_mode == "智能刷"){
                     console.info("[注意] 库存刷新耗时: ", sleepTarget + 50, "ms");
-                }else{}
+                    sleep(sleepTarget);
+
+                }
 
 
                 // 在等待前先快速检查一次确定按钮
                 confirm_btn = updated_webview.findOne(text("确定").algorithm('DFS'));
                 if (confirm_btn) {
-                    confirm_btn.click();
-                    sleep(special_confirm_delay - 100);
                     break;
                 }
 
@@ -5108,14 +5761,14 @@ while (true) {
                     break;
                 }
 
-
+                confirm_btn = find_confirm_btn(current_webview);
                 if (confirm_btn) {
                     break;
                 }
                 if (sku_result_toast_conf) {
                     click_plus_btn(updated_webview);
                 }
-            }
+
             }
             if (script_status == 0) {
                 rebuy_flag = false;
@@ -5123,6 +5776,9 @@ while (true) {
                 dc_streak = 0;
                 confirmButtonExecuted = false; // 重置确认按钮执行标志
                 purchasee_pagee_count = 0;
+                confirmBtnEnterCount = 0;
+                confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
                 break;
             }
             if(purchase_count > 1){
@@ -5138,6 +5794,16 @@ while (true) {
         var confirmButtonSearchStartTime = new Date().getTime();
         confirm_btn = find_confirm_btn(current_webview);
         if (confirm_btn) {
+                confirmBtnEnterCount++;
+                if (confirmBtnEnterCount === 2 && purchase_reduced_conf) {
+                    if(purchase_count > 1){
+                        var purchase_count_text = updated_webview.findOne(text("数量").algorithm('DFS'));
+                        if (purchase_count_text) {
+                            satisfyPurchaseCount(updated_webview, 1);
+                            console.info("[回流功能] 已将数量调整到1");
+                        }
+                    }
+                }
                 if (confirmButtonSearchStartTime - paymentThreadStartTime >= 2000){
                     if (!rebuy_flag) {
                         var now = new Date().getTime();
@@ -5167,14 +5833,14 @@ while (true) {
                             if(anti_rebound_mode){
                                 paymentThreadStartTime = new Date().getTime();
                             }
-                            continue;
+                            break;
                         }
                     }
-
                 } else {
                     console.warn("[等待] 防止反复被打回，延迟确定按键点击时间");
                     sleep(800);
                     if (tried_clicked_confirm_to_pay_page_count >= 2) {
+                        console.info("[操作] 点击确定按钮");
                         clickButton(confirm_btn);
                         tried_clicked_confirm_to_pay_page_count = 0;
                         if (debug_mode_conf) {
@@ -5185,6 +5851,7 @@ while (true) {
                         var elapsed = now - last_confirm_time;
                         if (elapsed >= 450) {
                             last_confirm_time = now;
+                            console.info("[操作] 点击确定按钮2");
                             confirm_btn.click();
                         }
                         tried_clicked_confirm_to_pay_page_count++;
@@ -5332,11 +5999,11 @@ while (true) {
 
                                     if (!retryFoundSearchText) {
                                         console.warn("[验证] 点击img后仍未找到搜索框，跳过当前循环");
-                                        continue; // 跳过当前循环，尝试下一个城市
+                                        break; // 跳过当前循环，尝试下一个城市
                                     }
                                 } catch (e) {
                                     console.error("[操作] 点击img失败: " + e.message);
-                                    continue; // 跳过当前循环，尝试下一个城市
+                                    break; // 跳过当前循环，尝试下一个城市
                                 }
                             }
 
@@ -5401,7 +6068,7 @@ while (true) {
                                                         var t2b = tv2b.text();
                                                         if (t2b && isFlexibleMatch(t2b, altName)) {
                                                             tv2b.click();
-                                                            console.info("[操作] 选择门店(二步) " + t2b);
+                                                            console.info("[操作] 选择门店 " + t2b);
                                                             foundShop = true;
                                                             monitorShopNameMax = null;
                                                             selectedShopNamecount = 0;
@@ -5480,234 +6147,9 @@ while (true) {
     }
     // 在页面状态切换时重置hasClickedConfirmAndPay
 }
-// 处理点击积分商品
-function handleClickPoints(webview, node) {
-    // 首先查找"立即兑换"按钮
-    var exchangeBtn = className('android.widget.TextView').text('立即兑换').findOne(10);
-    if (exchangeBtn) {
-        console.info("[积分兑换] 找到立即兑换按钮，直接点击");
-        exchangeBtn.click();
-        sleep(150);
-        handlePointsExchangeButtons();
-        return;
-    }
 
-    // 如果找不到"立即兑换"按钮，执行原有的积分商品查找逻辑
-    var pointsText = exchange_points.toString();
-    var pointsElement = webview.findOne(className("android.widget.TextView").text(pointsText).algorithm('DFS'));
-    if (pointsElement) {
-        pointsElement.click();
-        console.info("[积分兑换] 点击商品，积分: " + pointsText);
-      //  sleep(special_confirm_delay+200);
-        // 点击积分商品后，直接处理页面上的按钮
-        handlePointsExchangeButtons();
-    } else {
-        console.warn("[积分兑换] 未找到对应 "+ pointsText + "积分商品");
-        // 在积分兑换模式下，直接使用传入的webview重新查找，避免结构不匹配问题
-        try {
-            // 重新查找积分商品
-            var retryPointsElement = webview.findOne(className("android.widget.TextView").text(pointsText).algorithm('DFS'));
-            if (retryPointsElement) {
-                retryPointsElement.click();
-                console.info("[积分兑换] 重新查找后找到积分商品，点击成功: " + pointsText);
-                handlePointsExchangeButtons();
-            } else {
-                console.error("[积分兑换] 重新查找后仍未找到积分商品(" + pointsText + ")");
-            }
-        } catch (e) {
-            console.error("[积分兑换] 重新查找积分商品时发生错误: " + e.message);
-        }
-    }
-}
-
-// 处理积分兑换按钮的统一函数
-function handlePointsExchangeButtons() {
-
-    // 快速检查"立即兑换"按钮（减少等待时间）
-
-    var confirm_btn =  className('android.widget.TextView').text('立即兑换').findOne(10);
-            if (!confirm_btn) {
-                // 检查是否有"立即购买"按钮
-                var arrivalNoticeBtn = className('android.widget.TextView').text('到货通知').findOne(50);
-                if (arrivalNoticeBtn) {
-                    var bounds = arrivalNoticeBtn.bounds();
-                    press(bounds.centerX(), bounds.centerY(), 50);
-                    console.info("[积分兑换] 点击到货通知");
-                    back();
-                    return;
-                }
-                back();
-                return;
-            }else{
-                var bounds = confirm_btn.bounds();
-                press(bounds.centerX(), bounds.centerY(), 50);
-                console.info("[积分兑换] 点击立即兑换");
-                sleep(150);
-                if(purchase_count > 1){
-                    // 在积分兑换页面中查找数量控件并调整数量
-                    var purchase_count_text = className('android.widget.TextView').text('数量').findOne(100);
-                    if (purchase_count_text) {
-                        var idx_num_text = purchase_count_text.indexInParent();
-                        var parent_view = purchase_count_text.parent();
-                        if (parent_view) {
-                            sleep(100);
-                            var minus_btn = parent_view.child(idx_num_text + 1);
-                            var number_count_text = parent_view.child(idx_num_text + 2);
-                            var plus_btn = parent_view.child(idx_num_text + 3);
-
-                            if (minus_btn && number_count_text && plus_btn) {
-                                var current = parseInt(number_count_text.text());
-                                if (!isNaN(current) && current !== purchase_count) {
-                                    if (current > purchase_count) {
-                                        var diff = current - purchase_count;
-                                        for (var i = 0; i < diff; i++) {
-                                            minus_btn.click();
-                                            sleep(10);
-                                        }
-                                    } else {
-                                        var diff = purchase_count - current;
-                                        for (var i = 0; i < diff; i++) {
-                                            plus_btn.click();
-                                            sleep(10);
-                                        }
-                                    }
-                                    log("已满足购买数量要求: ", purchase_count);
-                                }
-                            }
-                        }
-                    }
-                }
-                var confirmBtn = className('android.widget.Button').text('确定').findOne(500);
-                if (confirmBtn) {
-                    confirmBtn.click();
-                    console.info("[积分兑换] 点击确定按钮");
-                    sleep(250);
-                    return;
-                }
-            }
-
-}
-
-// 处理确认订单页面
-function handleConfirmOrder() {
-    if (calibration_status.confirm_info) {
-        clickByCoordinates('confirm_info');
-          console.error("[点击] 确认信息并支付1");
-        sleep(ignore_ack_click_delay);
-    }
-    // 根据购买类型选择不同的确认按钮
-    if (calibration_status.double_confirm) {
-        clickByCoordinates('double_confirm');
-        console.info("[点击] 确认无误1");
-    }
-    //sleep(ignore_ack_click_confirm_delay + 100);
-
-    // 添加点击状态跟踪，确保顺序点击
-    var confirmInfoClicked = false;
-    var doubleConfirmClicked = false;
-    // 标记是否进入了while循环
-    // 添加重试计数器
-    var confirmInfoRetryCount = 0;
-    var doubleConfirmRetryCount = 0;
-    sleep(ignore_ack_click_confirm_delay -50);
-    while (className('android.widget.TextView').text('确认订单').exists() == true) {
-        if (script_status == 0) {
-            rebuy_flag = false;
-            submit_flag = false;
-            dc_streak = 0;
-            confirmButtonExecuted = false; // 重置确认按钮执行标志
-            purchasee_pagee_count = 0;
-            break;
-        }
-        var confirmInfoBtn = className('android.widget.TextView').text('确认信息并支付').findOne(200);
-        if(confirmInfoBtn && !confirmInfoClicked){
-            safeClickByText(className('android.widget.TextView'),'确认信息并支付');
-            console.error("[点击] 确认信息并支付2");
-            confirmInfoClicked = true;
-            doubleConfirmClicked = false;
-            sleep(ignore_ack_click_delay-100);
-        } else {
-            if(confirmInfoRetryCount < 2){
-                confirmInfoRetryCount++;
-           //   log("确认信息并支付:"+confirmInfoRetryCount);
-                sleep(100);
-                continue;
-            } else {
-                if(className('android.widget.TextView').text('我知道了').exists()==true){
-                    safeClickByText(className('android.widget.TextView'),'我知道了');
-                    }else{
-                        back();
-                    }
-                break;
-            }
-        }
-        var currentConfirmOrder = className('android.widget.TextView').text('确认订单').findOne(100);
-        if (!currentConfirmOrder) {
-          //  console.info("[页面变化] 检测到确认订单页面已消失，退出循环");
-            break;
-        }
-        sleep(100);
-         if(confirmInfoClicked && !doubleConfirmClicked) {
-
-                var confirmBtn = className('android.widget.TextView').text('确认无误').findOne(200);
-                if(confirmBtn) {
-                    //console.info('二次确认：点击\'确认无误\'按钮');
-                    safeClickByText(className('android.widget.TextView'),'确认无误');
-                    console.info("[点击] 确认无误2");
-                    doubleConfirmClicked = true;
-                    confirmInfoClicked = false;
-                    sleep(ignore_ack_click_confirm_delay-50);
-                } else {
-                    //console.info('二次确认：未找到\'确认无误\'按钮');
-                    if(doubleConfirmRetryCount < 2){
-                        doubleConfirmRetryCount++;
-
-                        continue;
-                    } else {
-                        if(className('android.widget.TextView').text('我知道了').exists()==true){
-                            safeClickByText(className('android.widget.TextView'),'我知道了');
-                            }
-                        break;
-                    }
-                }
-            }
-        // 检查页面是否真的发生了变化
-
-        var currentConfirmOrder = className('android.widget.TextView').text('确认订单').findOne(200);
-        if (!currentConfirmOrder) {
-         //   console.info("[页面变化] 检测到确认订单页面已消失，退出循环");
-            break;
-        }
-        sleep(200);
-    }
-    if (className('android.widget.TextView').text('支付成功').exists()) {
-        setVitaData(); //上传数据
-    }
-    sleep(50);
-    }
-
-// 处理积分不足情况
-function handleInsufficientPoints(webview) {
-    console.error("[积分兑换] 检测到积分不足，停止脚本");
-
-    // 停止脚本
-    script_status = 0;
-    ui.post(() => {
-        w.end.attr('visibility', 'gone');
-        w.start.attr('visibility', 'visible');
-    });
-
-    // 显示提示
-    toast("积分不足，脚本已停止");
-    console.warn("[积分兑换] 脚本已停止，请检查积分余额");
-}
-
-// 新增：兑换模式独立处理函数
+// 兑换模式
 function handleExchangeMode() {
-    //console.info("[兑换模式] 进入兑换模式独立逻辑");
-
-    sleep(100); // 使用快速模式主循环延迟
-
     // 获取webview父节点
     var webview_parent_node = get_webview_parent_node();
     if (!webview_parent_node) {
@@ -5760,3 +6202,649 @@ function handleExchangeMode() {
     }
 }
 
+//盒机模式
+function handprizeBoxMode() {
+    // 获取webview父节点
+    var webview_parent_node = get_webview_parent_node();
+    if (!webview_parent_node) {
+        if (debug_mode_conf) {
+            log("Cannot find webview parent node.");
+        }
+        return;
+    }
+
+    // 获取当前节点
+    var current_node = get_current_node(webview_parent_node);
+    if (!current_node) {
+        log("Cannot find current node.");
+        return;
+    }
+
+    // 获取当前页面的WebView
+    var current_webview = get_current_webview_fast(current_node);
+    if (!current_webview) {
+        if (debug_mode_conf) {
+        log("Cannot find current webview.");
+        }
+        return;
+    }
+
+    has_been_started = true;
+
+    // 获取页面头部信息
+    var header_text = get_header_text(current_node);
+    var page_info = check_prize_box_page_tree(header_text, current_webview);
+
+
+   // log("Header: " + page_info.header + ", Status: " + page_info.status);
+
+    switch (page_info.status) {
+        case "purchase":
+            // 盒机模式：处理选择规格和购买数量逻辑
+            var selectSpecIndex = -1; // "选择规格"的索引
+            var purchaseCountIndex = -1; // "购买数量"的索引
+            var updated_webview = get_current_webview_fast(current_node);
+            // 获取所有TextView元素
+            var textViews = updated_webview.find(className("android.widget.TextView").algorithm('DFS'));
+
+            // 单次遍历查找目标元素
+            for (var i = 0; i < textViews.length; i++) {
+                try {
+                    var tvText = textViews[i].text();
+                    if (tvText) {
+                        // 找到"选择规格"（模糊匹配）
+                        if (selectSpecIndex === -1 && tvText.indexOf("选择规格") !== -1) {
+                            selectSpecIndex = i;
+                        }
+                        // 找到"购买数量"（模糊匹配）
+                        if (purchaseCountIndex === -1 && tvText.indexOf("购买数量") !== -1) {
+                            purchaseCountIndex = i;
+                        }
+                        // 如果两个都找到了，提前退出循环
+                        if (selectSpecIndex !== -1 && purchaseCountIndex !== -1) {
+                            break;
+                        }
+                            }
+                        } catch (e) {
+                            // 忽略错误
+                        }
+                    }
+
+            // 根据spec_selection变量选择点击TextView
+            if (selectSpecIndex !== -1 && purchaseCountIndex !== -1 && spec_selection > 0) {
+                var textViewCount = purchaseCountIndex - selectSpecIndex - 1;
+
+                if (textViewCount > 0) {
+                    var targetIndex = spec_selection <= textViewCount
+                        ? selectSpecIndex + spec_selection
+                        : purchaseCountIndex - 1;
+
+                    try {
+                        var targetElement = textViews[targetIndex];
+                        var targetText = targetElement.text();
+                        targetElement.click();
+                        console.info("[盒机模式] 点击 " + targetText);
+                } catch (e) {
+                        // 忽略错误
+                    }
+                }
+            }
+            sleep(200);
+            if(purchase_count > 1){
+                var purchase_count_text = updated_webview.findOne(textMatches(".*数量.*").algorithm('DFS'));
+                if (purchase_count_text) {
+                    satisfyPurchaseCount(updated_webview, purchase_count);
+                    log("已满足购买数量要求: ", purchase_count);
+                }
+            }
+            var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                if (buyNowBtn) {
+                    buyNowBtn.click();
+                    console.info("点击立即购买按钮");
+                    sleep(special_confirm_delay - 100);
+                    break;
+                }
+            var buyNowBtn = updated_webview.findOne(text("到货通知").algorithm('DFS'));
+            if(buyNowBtn){
+                buyNowBtn.click();
+                console.info("点击到货通知按钮");
+                sleep(400);
+                back();
+                }
+            break;
+        case "info_page":
+            log("info_page");
+            var updated_webview = get_current_webview_fast(current_node);
+            var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                if (buyNowBtn) {
+                    buyNowBtn.click();
+                    console.info("点击立即购买按钮");
+                    sleep(400);
+                }  else {
+                    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                    if (buyNowBtn) {
+                        buyNowBtn.click();
+                        console.info("点击立即购买按钮");
+                        sleep(400);
+                    } else {
+                        // 如果没有立即购买按钮，检查是否有"距离开售时间还剩00:00"状态
+                        var prepareSaleBtn = current_webview.findOne(text("即将开售00:00").algorithm('DFS'));
+
+                        if (prepareSaleBtn) {
+                            refresh_attempt_count++;
+                            console.warn("[状态] 商品尚未发售，执行刷新操作 (第" + refresh_attempt_count + "次)");
+
+                            // 检查刷新次数限制
+                            if (refresh_attempt_count >= max_refresh_attempts) {
+                                console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
+                                script_status = 0;
+                                ui.post(() => {
+                                    w.end.attr('visibility', 'gone');
+                                    w.start.attr('visibility', 'visible');
+                                });
+                                break;
+                            }
+
+                            performRefreshActions(current_webview);
+
+                            // 刷新完成后立即检测是否有"立即购买"按钮
+                            console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
+
+                            // 等待页面加载完成
+                            sleep(1000);
+
+                            // 重新获取当前webview
+                            var updated_webview = get_current_webview_fast(current_node);
+                            if (updated_webview) {
+                                var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                                if (buyNowBtn) {
+                                    console.warn("[检测] 检测到'立即购买'按钮，商品已发售！");
+                                    console.info("立即点击购买按钮");
+                                    buyNowBtn.click();
+
+                                    // 重置刷新计数
+                                    refresh_attempt_count = 0;
+
+                                    // 等待页面跳转
+                                    sleep(400);
+                                    break;
+                                } else {
+                                    console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
+                                }
+                            }
+                        } else {
+                            // 如果没有找到任何识别的按钮，检查是否有"距离开售时间还剩00:00"
+                            var prepareSaleBtn = current_webview.findOne(text("即将开售00:00").algorithm('DFS'));
+
+                            if (prepareSaleBtn) {
+                                console.info("[检测] 发现倒计时文字，商品尚未发售，等待500ms后再次检测");
+                                sleep(500);
+
+                                // 重新获取当前webview，检查是否有"立即购买"按钮
+                                var updated_webview = get_current_webview_fast(current_node);
+                                if (updated_webview) {
+                                    var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                                    if (buyNowBtn) {
+                                        console.warn("[检测] 等待期间检测到'立即购买'按钮，商品已发售！");
+                                        console.info("立即点击购买按钮");
+                                        buyNowBtn.click();
+
+                                        // 重置刷新计数
+                                        refresh_attempt_count = 0;
+
+                                        // 等待页面跳转
+                                        sleep(400);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 如果没有找到任何识别的按钮，进行刷新
+                            console.info("未识别到购买按钮，执行刷新操作");
+                            performRefreshActions(current_webview);
+
+                            // 刷新完成后立即检测是否有"立即购买"按钮
+                            sleep(500);
+                            var updated_webview = get_current_webview_fast(current_node);
+                            if (updated_webview) {
+                                var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                                if (buyNowBtn) {
+                                    console.warn("[检测] 检测到'立即购买'按钮，商品已发售！");
+                                    console.info("立即点击购买按钮");
+                                    buyNowBtn.click();
+
+                                    // 重置刷新计数
+                                    refresh_attempt_count = 0;
+
+                                    // 等待页面跳转
+                                    sleep(500);
+                                    break;
+                                } else {
+                                    console.info("[检测] 暂未发现'立即购买'按钮，继续等待");
+                                }
+                            }
+                        }
+                    }
+                }
+            break;
+        case "prepare_sale":
+                submit_flag = false;
+                ignore_next_purchase_page_flag = false;
+
+                // 检查刷新次数限制
+                if (refresh_attempt_count >= max_refresh_attempts) {
+                    console.warn("[通知] 已达到最大刷新次数(" + max_refresh_attempts + ")，停止刷新");
+                    script_status = 0;
+                    confirmBtnEnterCount = 0; // 重置回流计数器
+                    ui.post(() => {
+                        w.end.attr('visibility', 'gone');
+                        w.start.attr('visibility', 'visible');
+                    });
+                    break;
+                }
+
+                // 检查是否有"距离开售时间还剩00:00"文字
+                var prepareSaleBtn = current_webview.findOne(text("即将开售00:00").algorithm('DFS'));
+
+                if (prepareSaleBtn) {
+                    refresh_attempt_count++;
+
+                    console.info("发现'即将开售00:00'文字，先等待500ms检测是否有'立即购买'按钮 (第" + refresh_attempt_count + "次)");
+
+                    // 在刷新之前先等待500ms，检测是否有"立即购买"按钮出现
+                    console.info("[等待] 等待500ms检测是否有'立即购买'按钮出现...");
+                    sleep(500);
+
+                    // 重新获取当前webview，检查是否有"立即购买"按钮
+                    var updated_webview = get_current_webview_fast(current_node);
+                    if (updated_webview) {
+                        var buyNowBtn = updated_webview.findOne(text("立即购买").algorithm('DFS'));
+                        if (buyNowBtn) {
+                            console.warn("[成功] 🎉 等待期间检测到'立即购买'按钮，商品已发售！");
+                            console.info("立即点击购买按钮，跳过刷新操作");
+                            buyNowBtn.click();
+
+                            // 重置刷新计数
+                            refresh_attempt_count = 0;
+                            rebuy_flag = false;
+
+                            // 等待页面跳转
+                            sleep(500);
+                            break;
+                        }
+                    }
+
+                    // 如果没有检测到"立即购买"按钮，才进行刷新操作
+                    console.info("[检测] 500ms内未检测到'立即购买'按钮，开始执行刷新操作");
+
+                    if (refresh_on_prepare_sale) {
+                        performRefreshActions(current_webview);
+
+                        // 刷新完成后立即检测是否有"立即购买"按钮
+                        console.info("[检测] 刷新完成，立即检测是否有'立即购买'按钮");
+
+                        // 等待页面加载完成
+                        sleep(1000);
+
+                        // 重新获取当前webview（可能已经更新）
+                        var updated_webview_after_refresh = get_current_webview_fast(current_node);
+                        if (updated_webview_after_refresh) {
+                            var buyNowBtn = updated_webview_after_refresh.findOne(text("立即购买").algorithm('DFS'));
+                            if (buyNowBtn) {
+                                console.warn("[成功] 🎉 刷新后检测到'立即购买'按钮，商品已发售！");
+                                console.info("立即点击购买按钮");
+                                buyNowBtn.click();
+
+                                // 重置刷新计数
+                                refresh_attempt_count = 0;
+                                rebuy_flag = false;
+
+                                // 等待页面跳转
+                                sleep(500);
+                                break;
+                            } else {
+                                console.info("[检测] 刷新后暂未发现'立即购买'按钮，继续等待");
+                            }
+                        }
+                    } else {
+                        console.info("[配置] 准备发售状态刷新已禁用，仅等待");
+                    }
+
+                    // 等待一段时间后再检查
+                    sleep(refresh_delay);
+                } else {
+                    // 如果没有找到相关按钮，可能页面已经改变，重新检测
+                    console.info("未找到发售状态按钮，可能页面已更新或商品已发售");
+
+                    // 立即检测是否有"立即购买"按钮
+                    var buyNowBtn = current_webview.findOne(text("立即购买").algorithm('DFS'));
+                    if (buyNowBtn) {
+                        console.warn("[成功] 🎉 检测到'立即购买'按钮，商品已发售！");
+                        console.info("立即点击购买按钮");
+                        buyNowBtn.click();
+
+                        // 重置刷新计数
+                        refresh_attempt_count = 0;
+                        rebuy_flag = false;
+
+                        // 等待页面跳转
+                        sleep(500);
+                        break;
+                    }
+
+                    refresh_attempt_count = 0; // 重置刷新计数
+                    sleep(200);
+                }
+                break;
+        case "purchase_refresh":
+            var selectSpecIndex = -1; // "选择规格"的索引
+            var purchaseCountIndex = -1; // "购买数量"的索引
+            var updated_webview = get_current_webview_fast(current_node);
+            // 获取所有TextView元素
+            var textViews = updated_webview.find(className("android.widget.TextView").algorithm('DFS'));
+
+            // 单次遍历查找目标元素
+            for (var i = 0; i < textViews.length; i++) {
+                try {
+                    var tvText = textViews[i].text();
+                    if (tvText) {
+                        // 找到"选择规格"（模糊匹配）
+                        if (selectSpecIndex === -1 && tvText.indexOf("选择规格") !== -1) {
+                            selectSpecIndex = i;
+                        }
+                        // 找到"购买数量"（模糊匹配）
+                        if (purchaseCountIndex === -1 && tvText.indexOf("购买数量") !== -1) {
+                            purchaseCountIndex = i;
+                        }
+                        // 如果两个都找到了，提前退出循环
+                        if (selectSpecIndex !== -1 && purchaseCountIndex !== -1) {
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    // 忽略错误
+                }
+            }
+
+            // 根据spec_selection变量选择点击TextView
+            if (selectSpecIndex !== -1 && purchaseCountIndex !== -1 && spec_selection > 0) {
+                var textViewCount = purchaseCountIndex - selectSpecIndex - 1;
+
+                if (textViewCount > 0) {
+                    // 收集有效的TextView和缺货前的TextView
+                    var validTextViews = [];
+                    var outOfStockPreviousTextViews = []; // 保存缺货前的TextView
+
+                    for (var j = selectSpecIndex + 1; j < purchaseCountIndex; j++) {
+                        try {
+                            var element = textViews[j];
+                            var elementText = element.text();
+                            if (elementText && elementText.trim().length > 0) {
+                                if (elementText.indexOf("缺货") !== -1) {
+                                    // 发现缺货，记录上一个TextView
+                                    if (j > selectSpecIndex + 1) {
+                                        var previousElement = textViews[j - 1];
+                                        var previousText = previousElement.text();
+                                        if (previousText && previousText.trim().length > 0) {
+                                            outOfStockPreviousTextViews.push({
+                                                index: j - 1,
+                                                element: previousElement,
+                                                text: previousText,
+                                                outOfStockText: elementText
+                                            });
+                                            console.info("[盒机模式] 发现缺货: " + elementText + "，记录上一个TextView: " + previousText);
+                                        }
+                                    }
+                                } else {
+                                    // 非缺货的TextView
+                                    validTextViews.push({
+                                        index: j,
+                                        element: element,
+                                        text: elementText
+                                    });
+                                }
+                            }
+                        } catch (e) {
+                            // 忽略错误
+                        }
+                    }
+
+                    // 如果有缺货前的TextView，优先处理
+                    if (outOfStockPreviousTextViews.length > 0) {
+                        console.info("[盒机模式] 开始处理缺货前的TextView，共" + outOfStockPreviousTextViews.length + "个");
+
+                        for (var k = 0; k < outOfStockPreviousTextViews.length; k++) {
+                            var outOfStockItem = outOfStockPreviousTextViews[k];
+                            try {
+                                // 重新获取webview和TextView元素，避免元素引用失效
+                                var current_webview = get_current_webview_fast(current_node);
+                                var current_textViews = current_webview.find(className("android.widget.TextView").algorithm('DFS'));
+
+                                // 根据索引重新获取目标元素
+                                var targetIndex = outOfStockItem.index;
+                                if (targetIndex >= 0 && targetIndex < current_textViews.length) {
+                                    var targetElement = current_textViews[targetIndex];
+                                    var targetText = targetElement.text();
+
+                                    // 尝试多种点击方式
+                                    var clickSuccess = false;
+                                    try {
+                                        targetElement.click();
+                                        console.info("[盒机模式] 直接点击成功: " + targetText);
+                                        clickSuccess = true;
+                                    } catch (e1) {
+                                        console.info("[盒机模式] 直接点击失败，尝试坐标点击");
+                                        try {
+                                            var bounds = targetElement.bounds();
+                                            click(bounds.centerX(), bounds.centerY());
+                                            console.info("[盒机模式] 坐标点击成功: " + targetText);
+                                            clickSuccess = true;
+                                        } catch (e2) {
+                                            console.error("[盒机模式] 坐标点击也失败: " + e2.message);
+                                        }
+                                    }
+
+                                    // 如果点击成功，检查并点击"到货通知"按钮
+                                    if (clickSuccess) {
+                                        sleep(400); // 等待页面响应
+                                        var notifyBtn = className('android.widget.Button').text('到货通知').findOne(100);
+                                        if (notifyBtn) {
+                                            try {
+                                                var bounds = notifyBtn.bounds();
+                                                click(bounds.centerX(), bounds.centerY());
+                                                console.info("[盒机模式] 点击到货通知按钮成功");
+                                                log("[操作] 点击到货通知");
+                                            } catch (e) {
+                                                console.error("[盒机模式] 点击到货通知失败: " + e.message);
+                                            }
+                                        } else {
+                                            console.info("[盒机模式] 未找到到货通知按钮");
+                                        }
+                                    }
+                                } else {
+                                    console.warn("[盒机模式] 目标索引超出范围: " + targetIndex);
+                                }
+
+                                sleep(200);
+
+                            } catch (e) {
+                                console.error("[盒机模式] 处理缺货前TextView失败: " + e.message);
+                            }
+                        }
+                    }
+                }
+            }
+            var screenWidth = device.width;
+            var screenHeight = device.height;
+            var centerX = Math.floor(screenWidth * 0.5);
+            var centerY = Math.floor(screenHeight * 0.4);
+            click(centerX, centerY);
+            log("[操作] 屏幕中心");
+            sleep(200);
+            var buyNowBtn = className('android.widget.Button').text('到货通知').findOne(100);
+            if (buyNowBtn) {
+                buyNowBtn.click();
+                log("[操作] 点击到货通知");
+                sleep(400);
+            }
+            break;
+        case "refresh":
+            var buyNowBtn = className('android.widget.Button').text('到货通知').findOne(100);
+                if (buyNowBtn) {
+                    try {
+                        var bounds = buyNowBtn.bounds();
+                        click(bounds.centerX(), bounds.centerY());
+                        log("[操作] 坐标点击到货通知");
+                    } catch (e) {
+                        log("[操作] 坐标点击失败: " + e.message);
+                    }
+                    sleep(400);
+                }else{
+                    performRefreshActions(current_webview);
+                }
+
+            break;
+        case "back":
+                if (script_status == 0) {
+                    rebuy_flag = false;
+                    submit_flag = false;
+                    dc_streak = 0;
+                    confirmButtonExecuted = false; // 重置确认按钮执行标志
+                    purchasee_pagee_count = 0;
+                    confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                    doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
+                    break;
+                }
+                var buyNowBtn = className('android.widget.TextView').text('一次抽多盒').findOne(20) || className('android.widget.TextView').text('立即选盒').findOne(20);
+                if(buyNowBtn){
+                    break;
+                }
+                var buyNowBtn = className('android.widget.TextView').text('到货提醒').findOne(100);
+                if (buyNowBtn) {
+                    buyNowBtn.click();
+                    log("[操作] 点击到货通知");
+                }
+                var buyNowBtn = className('android.widget.TextView').text('一次抽多盒').findOne(20) || className('android.widget.TextView').text('立即选盒').findOne(20);
+                if(buyNowBtn){
+                    break;
+                }
+                back();
+                break;
+        case "withdraw":
+            var updated_webview = get_current_webview_fast(current_node);
+            // 点击一次抽多盒选项
+            var multiBoxOption = updated_webview.findOne(className("android.widget.Button").textContains("确认上述信息并支付"));
+            if (multiBoxOption) {
+                log("[操作] 确认上述信息并支付");
+                multiBoxOption.click();
+            }
+            break;
+        case "withdraw_and_pay":
+            var updated_webview = get_current_webview_fast(current_node);
+            // 点击一次抽多盒选项
+            var multiBoxOption = updated_webview.findOne(className("android.widget.TextView").text("立即选盒"));
+            if (multiBoxOption) {
+                log("[操作] 点击立即选盒");
+                multiBoxOption.click();
+                sleep(100);
+            }
+            var multiBoxOptionbox = updated_webview.findOne(className("android.widget.TextView").text("一次抽多盒"));
+            if (multiBoxOptionbox) {
+                    log("[操作] 点击一次抽多盒选项");
+                    multiBoxOptionbox.click();
+                    sleep(200);
+            }
+
+            // 遍历所有android.view.View并分析
+            var allViews = updated_webview.find(className("android.view.View").depth(23));
+            // 遍历所有深度23的view，查找其子元素中的Image
+            for (var i = 0; i < allViews.length; i++) {
+                var view = allViews[i];
+                var images = view.find(className("android.widget.Image"));
+                for (var j = 0; j < images.length; j++) {
+                    var image = images[j];
+                if (image && image.indexInParent() == 2) {
+                    image.click();
+                        //sleep(10); // 每次点击后等待一下
+                    }
+                }
+            }
+            log("[操作] 选盒完成");
+            var latest_webview = get_current_webview_fast(current_node);
+            if (!latest_webview) {
+                latest_webview = updated_webview;
+            }
+            var  settleTextView = latest_webview.findOne(className("android.widget.TextView").text("全选").algorithm('DFS'));
+            if (settleTextView) {
+                var idx_num_text = settleTextView.indexInParent();
+                var parent_view = settleTextView.parent();
+                if (parent_view && parent_view.childCount() > idx_num_text + 2) {
+                    var number_count_text = parent_view.child(idx_num_text + 2);
+                    if (number_count_text) {
+                log("[操作] 点击去结算按钮");
+                        number_count_text.click();
+            }
+                }
+            }
+            break;
+        case "confirm_and_pay":
+            if (calibration_status.confirm_pay) {
+                clickByCoordinates('confirm_pay');
+                console.error("[点击] 确认支付1");
+            }
+
+            while (className('android.widget.TextView').text('确认订单').exists() == true) {
+                // 检查是否被要求停止
+                if (script_status == 0) {
+                    rebuy_flag = false;
+                    submit_flag = false;
+                    dc_streak = 0;
+                    confirmButtonExecuted = false; // 重置确认按钮执行标志
+                    purchasee_pagee_count = 0;
+                    confirmInfoClicked = false; // 重置确认信息并支付按钮点击状态
+                    doubleConfirmClicked = false; // 重置确认无误/就是这家按钮点击状态
+                    break;
+                }
+                var confirmInfoBtn = className('android.widget.TextView').text('确认支付').findOne(20);
+                if(confirmInfoBtn){
+                    if (!calibration_status.confirm_pay) {
+                        var bounds = confirmInfoBtn.bounds();
+                        var coords = [bounds.left, bounds.top, bounds.right, bounds.bottom];
+                        cached_confirm_pay_coords = coords;
+                        calibration_status.confirm_pay = true;
+                        updatePrecomputedCoords();
+                        saveCoordinatesToStorage();
+                        console.info("[记录坐标] 确认支付按钮坐标已记录并保存到本地");
+                    }
+                    safeClickByText(className('android.widget.TextView'),'确认支付');
+                    console.error("[点击] 确认支付2");
+                    continue;
+                }
+            }
+            if (!className('android.widget.TextView').text('确认订单').exists()) {
+                // 检查是否找不到webview_parent_node（通常表示进入了支付页面）
+                var webview_parent_node = get_webview_parent_node();
+                if (!webview_parent_node) {
+                    // 新增：检测微信支付相关元素
+                    if (detectWeChatPayment()) {
+                        submit_flag = true;
+                        console.info("[支付线程] 检测到支付标志 - 进入支付状态");
+                    }
+                }
+            }
+            break;
+        case "favoriteslist":
+            // 遍历当前页面所有元素并打印
+            traverseAndPrintAllElements(current_node,current_webview);
+            break;
+        case "default":
+            // 默认逻辑
+            break;
+        case "no_webview":
+            log("No current webview found");
+            break;
+        default:
+            log("Unknown status: " + page_info.status);
+            break;
+    }
+}
